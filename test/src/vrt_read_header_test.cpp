@@ -3,6 +3,7 @@
 #include <any>
 #include <array>
 #include <cstdint>
+#include <cstring>
 #include <string>
 
 #include <vrt/vrt_error_code.h>
@@ -41,11 +42,17 @@ TEST_F(ReadHeaderTest, PacketType) {
 }
 
 TEST_F(ReadHeaderTest, PacketTypeInvalid) {
-    buf_[0] = 0x60000000;
+    /* Types 6 and 7 are command packets since VITA 49.2 */
+    buf_[0] = 0x80000000;
     ASSERT_EQ(vrt_read_header(buf_.data(), 1, &h_, true), VRT_ERR_INVALID_PACKET_TYPE);
     ASSERT_EQ(vrt_read_header(buf_.data(), 1, &h_, false), 1);
+    /* Compare as an integer, since 8 is outside the value range of the C++ enum */
+    uint32_t packet_type = 0;
+    std::memcpy(&packet_type, &h_.packet_type, sizeof(packet_type));
+    ASSERT_EQ(packet_type, 0x8U);
+    h_.packet_type = VRT_PT_IF_DATA_WITHOUT_STREAM_ID;
     SCOPED_TRACE(::testing::UnitTest::GetInstance()->current_test_info()->name());
-    assert_header(h_, {{"packet_type", static_cast<vrt_packet_type>(0x6)}});
+    assert_header(h_, {});
 }
 
 TEST_F(ReadHeaderTest, HasClassId) {
@@ -77,12 +84,12 @@ TEST_F(ReadHeaderTest, Tsm) {
     assert_header(h_, {{"packet_type", VRT_PT_IF_CONTEXT}, {"tsm", VRT_TSM_COARSE}});
 }
 
-TEST_F(ReadHeaderTest, TsmInvalid) {
+TEST_F(ReadHeaderTest, TsmInData) {
+    /* Bit 24 of data packets is the spectrum indicator since VITA 49.2, not TSM */
     buf_[0] = 0x01000000;
-    ASSERT_EQ(vrt_read_header(buf_.data(), 1, &h_, true), VRT_ERR_TSM_IN_DATA);
-    ASSERT_EQ(vrt_read_header(buf_.data(), 1, &h_, false), 1);
+    ASSERT_EQ(vrt_read_header(buf_.data(), 1, &h_, true), 1);
     SCOPED_TRACE(::testing::UnitTest::GetInstance()->current_test_info()->name());
-    assert_header(h_, {{"tsm", VRT_TSM_COARSE}});
+    assert_header(h_, {{"spectrum_or_time", VRT_SOT_SPECTRUM}});
 }
 
 TEST_F(ReadHeaderTest, Tsi) {
@@ -114,11 +121,11 @@ TEST_F(ReadHeaderTest, PacketSize) {
 }
 
 TEST_F(ReadHeaderTest, Reserved) {
+    /* Bit 25 was reserved in VITA 49.0 and is the Nd0 indicator since VITA 49.2 */
     buf_[0] = 0x02000000;
-    ASSERT_EQ(vrt_read_header(buf_.data(), 1, &h_, true), VRT_ERR_RESERVED);
-    ASSERT_EQ(vrt_read_header(buf_.data(), 1, &h_, false), 1);
+    ASSERT_EQ(vrt_read_header(buf_.data(), 1, &h_, true), 1);
     SCOPED_TRACE(::testing::UnitTest::GetInstance()->current_test_info()->name());
-    assert_header(h_, {});
+    assert_header(h_, {{"nd0", true}});
 }
 
 TEST_F(ReadHeaderTest, EveryOther1) {

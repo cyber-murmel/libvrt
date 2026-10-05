@@ -12,6 +12,7 @@ extern "C" {
  * Type of packet.
  *
  * \note Remaining values are reserved for future packet types.
+ * \note IF data packets are called Signal Data packets in VITA 49.2.
  */
 enum vrt_packet_type {
     VRT_PT_IF_DATA_WITHOUT_STREAM_ID  = 0x0, /**< IF data packet without stream identifier. */
@@ -19,7 +20,9 @@ enum vrt_packet_type {
     VRT_PT_EXT_DATA_WITHOUT_STREAM_ID = 0x2, /**< Extension data packet without stream identifier. */
     VRT_PT_EXT_DATA_WITH_STREAM_ID    = 0x3, /**< Extension data packet with stream identifier. */
     VRT_PT_IF_CONTEXT                 = 0x4, /**< IF context packet. */
-    VRT_PT_EXT_CONTEXT                = 0x5  /**< Extension context packet. */
+    VRT_PT_EXT_CONTEXT                = 0x5, /**< Extension context packet. */
+    VRT_PT_COMMAND                    = 0x6, /**< Command packet (VITA 49.2). Always has a stream identifier. */
+    VRT_PT_EXT_COMMAND = 0x7 /**< Extension command packet (VITA 49.2). Always has a stream identifier. */
 };
 
 /**
@@ -68,7 +71,18 @@ enum vrt_tsf {
 };
 
 /**
+ * Signal data packet content, i.e. the S indicator bit (VITA 49.2).
+ */
+enum vrt_spectrum_or_time {
+    VRT_SOT_TIME     = 0x0, /**< Payload contains time domain samples. */
+    VRT_SOT_SPECTRUM = 0x1  /**< Payload contains spectrum (frequency domain) data. */
+};
+
+/**
  * Header data.
+ *
+ * \note Header bits 26 to 24 are packet type specific. Bit 26 is has.trailer (data) or acknowledge (command), bit 25
+ *       is nd0 (data, context), and bit 24 is spectrum_or_time (data), tsm (context) or cancellation (command).
  */
 struct vrt_header {
     /** Type of packet. */
@@ -82,6 +96,32 @@ struct vrt_header {
      * \note True is only valid for context packets.
      */
     enum vrt_tsm tsm;
+    /**
+     * Not a V49.0 packet indicator (Nd0, VITA 49.2). Set when the packet uses VITA 49.2 features, such as CIF1 fields
+     * or a spectrum payload, that a VITA 49.0 receiver cannot interpret.
+     *
+     * \note Only valid for data and context packets. The bit is reserved in command packets, but some implementations
+     *       set it there, so reading accepts it while writing with validation rejects it.
+     */
+    bool nd0;
+    /**
+     * Whether the payload contains time or spectrum data (S, VITA 49.2).
+     *
+     * \note Only valid for data packets.
+     */
+    enum vrt_spectrum_or_time spectrum_or_time;
+    /**
+     * True if this is an acknowledge packet (A, VITA 49.2).
+     *
+     * \note Only valid for command packets.
+     */
+    bool acknowledge;
+    /**
+     * True if this is a cancellation packet (CE, VITA 49.2).
+     *
+     * \note Only valid for command packets.
+     */
+    bool cancellation;
     /**
      * Type of integer second timestamp.
      */
@@ -246,6 +286,13 @@ struct vrt_context_indicators {
     bool ephemeris_reference_identifier; /**< True if it has the Ephemeris reference identifier field. */
     bool gps_ascii;                      /**< True if it has the GPS ASCII field. */
     bool context_association_lists;      /**< True if it has the Context association list field. */
+    /*
+     * CIF1 (VITA 49.2). The CIF1 word is written exactly when at least one of these is true. Other CIF1 fields, and the
+     * CIF2, CIF3 and CIF7 words, are not supported.
+     */
+    bool health_status;       /**< True if it has the Health status field (CIF1). */
+    bool v49_spec_compliance; /**< True if it has the V49 spec compliance field (CIF1). */
+    bool version_build_code;  /**< True if it has the Version and build code field (CIF1). */
 };
 
 /**
@@ -607,7 +654,52 @@ struct vrt_context_association_lists {
 };
 
 /**
+ * VITA 49 standard version that a packet stream complies with (CIF1 V49 spec compliance field, VITA 49.2).
+ *
+ * \note Remaining values are reserved.
+ */
+enum vrt_v49_spec_compliance {
+    VRT_V49_0 = 0x1, /**< ANSI/VITA 49.0. */
+    VRT_V49_1 = 0x2, /**< ANSI/VITA 49.1. */
+    VRT_V49_A = 0x3, /**< ANSI/VITA 49A. */
+    VRT_V49_2 = 0x4  /**< ANSI/VITA 49.2. */
+};
+
+/**
+ * Version and build code (CIF1, VITA 49.2).
+ */
+struct vrt_version_build_code {
+    /**
+     * Year code.
+     *
+     * \note Only the 7 least significant bits are used.
+     */
+    uint8_t year;
+    /**
+     * Day of year.
+     *
+     * \note Only the 9 least significant bits are used.
+     */
+    uint16_t day;
+    /**
+     * Revision.
+     *
+     * \note Only the 6 least significant bits are used.
+     */
+    uint8_t revision;
+    /**
+     * User defined.
+     *
+     * \note Only the 10 least significant bits are used.
+     */
+    uint16_t user_defined;
+};
+
+/**
  * Context section data.
+ *
+ * \note Also used for the control fields of control and query-state acknowledge packets (VITA 49.2), which encode
+ *       them the same way, and for the indicator bits of cancellation packets, which have no fields.
  */
 struct vrt_if_context {
     /**
@@ -706,18 +798,183 @@ struct vrt_if_context {
      * \note In the standard this is sometimes called 'lists' and sometimes 'list'.
      */
     struct vrt_context_association_lists context_association_lists;
+    /** Health status (CIF1). Raw 32-bit word. */
+    uint32_t health_status;
+    /** V49 spec compliance (CIF1). */
+    enum vrt_v49_spec_compliance v49_spec_compliance;
+    /** Version and build code (CIF1). */
+    struct vrt_version_build_code version_build_code;
+};
+
+/**
+ * Format of a controllee or controller identifier (VITA 49.2).
+ */
+enum vrt_identifier_format {
+    VRT_IDF_WORD = 0x0, /**< 32-bit identifier. */
+    VRT_IDF_UUID = 0x1  /**< 128-bit UUID. */
+};
+
+/**
+ * Control action mode (VITA 49.2).
+ *
+ * \note Value 3 is reserved.
+ */
+enum vrt_action_mode {
+    VRT_AM_NO_ACTION = 0x0, /**< Take no action. */
+    VRT_AM_DRY_RUN   = 0x1, /**< Do not apply controls, but acknowledge as if they were applied. */
+    VRT_AM_EXECUTE   = 0x2  /**< Apply controls. */
+};
+
+/**
+ * Timestamp control mode (VITA 49.2).
+ *
+ * \note Values 5 and 6 are reserved.
+ */
+enum vrt_timing_control {
+    VRT_TC_IGNORE        = 0x0, /**< Execute with no timestamp constraints. */
+    VRT_TC_DEVICE        = 0x1, /**< Execute within the device timing precision window. */
+    VRT_TC_LATE          = 0x2, /**< Execute on time, or late within the application timing window. */
+    VRT_TC_EARLY         = 0x3, /**< Execute on time, or early within the application timing window. */
+    VRT_TC_EARLY_LATE    = 0x4, /**< Execute within the application timing window. */
+    VRT_TC_TIMING_ISSUES = 0x7  /**< Some controls were not executed at the specified time. Acknowledge only. */
+};
+
+/**
+ * Control/Acknowledge mode (CAM) word of command packets (VITA 49.2).
+ *
+ * \note In control packets, validation, execution, query_state, warnings and errors request acknowledge packets. In
+ *       acknowledge packets they state the kind of acknowledge, and whether warning and error indicator words follow.
+ */
+struct vrt_cam {
+    bool                       controllee_enable;     /**< True if the Controllee identifier is included. */
+    enum vrt_identifier_format controllee_format;     /**< Format of the Controllee identifier. */
+    bool                       controller_enable;     /**< True if the Controller identifier is included. */
+    enum vrt_identifier_format controller_format;     /**< Format of the Controller identifier. */
+    bool                       permit_partial;        /**< True if partial execution is permitted. */
+    bool                       permit_warnings;       /**< True if execution is permitted despite warnings. */
+    bool                       permit_errors;         /**< True if execution is permitted despite errors. */
+    enum vrt_action_mode       action_mode;           /**< Action mode. */
+    bool                       nack_only;             /**< True if acknowledges are only sent on warnings or errors. */
+    bool                       validation;            /**< Validation acknowledge (V). */
+    bool                       execution;             /**< Execution acknowledge (X). */
+    bool                       query_state;           /**< Query-state acknowledge (S). */
+    bool                       warnings;              /**< Warnings requested or included (W). */
+    bool                       errors;                /**< Errors requested or included (Er). */
+    enum vrt_timing_control    timing_control;        /**< Timestamp control mode. */
+    bool                       partial_action;        /**< True if only part of the action was taken. Ack only. */
+    bool                       scheduled_or_executed; /**< True if the action was scheduled or executed. Ack only. */
+};
+
+/**
+ * Bit masks for the warning and error response words of acknowledge packets (VITA 49.2). Bits 12 to 1 are user
+ * defined.
+ */
+static const uint32_t VRT_WEF_FIELD_NOT_EXECUTED              = 0x80000000U; /**< Field not executed. */
+static const uint32_t VRT_WEF_DEVICE_FAILURE                  = 0x40000000U; /**< Device failure. */
+static const uint32_t VRT_WEF_ERRONEOUS_FIELD                 = 0x20000000U; /**< Field not accepted by device. */
+static const uint32_t VRT_WEF_PARAMETER_OUT_OF_RANGE          = 0x10000000U; /**< Parameter out of range. */
+static const uint32_t VRT_WEF_PARAMETER_UNSUPPORTED_PRECISION = 0x08000000U; /**< Unsupported precision. */
+static const uint32_t VRT_WEF_FIELD_VALUE_INVALID             = 0x04000000U; /**< Field value invalid. */
+static const uint32_t VRT_WEF_TIMESTAMP_PROBLEM               = 0x02000000U; /**< Timestamp problem. */
+static const uint32_t VRT_WEF_HAZARDOUS_POWER_LEVELS          = 0x01000000U; /**< Hazardous power levels. */
+static const uint32_t VRT_WEF_DISTORTION                      = 0x00800000U; /**< Distortion. */
+static const uint32_t VRT_WEF_IN_BAND_POWER_COMPLIANCE        = 0x00400000U; /**< In-band power compliance. */
+static const uint32_t VRT_WEF_OUT_OF_BAND_POWER_COMPLIANCE    = 0x00200000U; /**< Out-of-band power compliance. */
+static const uint32_t VRT_WEF_COSITE_INTERFERENCE             = 0x00100000U; /**< Co-site interference. */
+static const uint32_t VRT_WEF_REGIONAL_INTERFERENCE           = 0x00080000U; /**< Regional interference. */
+
+/**
+ * Warning or error indicator words (WIF0/WIF1 or EIF0/EIF1) and their response words, one 32-bit word per indicated
+ * field regardless of the size of the field itself, in acknowledge packets (VITA 49.2). Response words are bitwise ORs
+ * of VRT_WEF_* masks.
+ */
+struct vrt_ack_responses {
+    /** Fields with a response word. Same bit layout as CIF0 and CIF1. */
+    struct vrt_context_indicators has;
+    uint32_t                      reference_point_identifier;     /**< Response for Reference point identifier. */
+    uint32_t                      bandwidth;                      /**< Response for Bandwidth. */
+    uint32_t                      if_reference_frequency;         /**< Response for IF reference frequency. */
+    uint32_t                      rf_reference_frequency;         /**< Response for RF reference frequency. */
+    uint32_t                      rf_reference_frequency_offset;  /**< Response for RF reference frequency offset. */
+    uint32_t                      if_band_offset;                 /**< Response for IF band offset. */
+    uint32_t                      reference_level;                /**< Response for Reference level. */
+    uint32_t                      gain;                           /**< Response for Gain. */
+    uint32_t                      over_range_count;               /**< Response for Over-range count. */
+    uint32_t                      sample_rate;                    /**< Response for Sample rate. */
+    uint32_t                      timestamp_adjustment;           /**< Response for Timestamp adjustment. */
+    uint32_t                      timestamp_calibration_time;     /**< Response for Timestamp calibration time. */
+    uint32_t                      temperature;                    /**< Response for Temperature. */
+    uint32_t                      device_identifier;              /**< Response for Device identifier. */
+    uint32_t                      state_and_event_indicators;     /**< Response for State and event indicators. */
+    uint32_t                      data_packet_payload_format;     /**< Response for Data packet payload format. */
+    uint32_t                      formatted_gps_geolocation;      /**< Response for Formatted GPS geolocation. */
+    uint32_t                      formatted_ins_geolocation;      /**< Response for Formatted INS geolocation. */
+    uint32_t                      ecef_ephemeris;                 /**< Response for ECEF ephemeris. */
+    uint32_t                      relative_ephemeris;             /**< Response for Relative ephemeris. */
+    uint32_t                      ephemeris_reference_identifier; /**< Response for Ephemeris reference identifier. */
+    uint32_t                      gps_ascii;                      /**< Response for GPS ASCII. */
+    uint32_t                      context_association_lists;      /**< Response for Context association lists. */
+    uint32_t                      health_status;                  /**< Response for Health status (CIF1). */
+    uint32_t                      v49_spec_compliance;            /**< Response for V49 spec compliance (CIF1). */
+    uint32_t                      version_build_code;             /**< Response for Version and build code (CIF1). */
+};
+
+/**
+ * Command section of command and Ext command packets (VITA 49.2): CAM, message ID and identifiers, directly following
+ * the fields section. For validation and execution acknowledge packets it also holds the warning and error responses.
+ *
+ * \note The control fields of control and query-state acknowledge packets, and the indicator bits of cancellation
+ *       packets, are in vrt_packet.if_context. The custom section of Ext command packets is vrt_packet.body.
+ */
+struct vrt_command {
+    /** Control/Acknowledge mode. */
+    struct vrt_cam cam;
+    /** Message ID. Pairs acknowledges with controls. */
+    uint32_t message_id;
+    /** Controllee identifier. Activate by setting cam.controllee_enable and cam.controllee_format = VRT_IDF_WORD. */
+    uint32_t controllee_id;
+    /**
+     * Controllee UUID. Activate by setting cam.controllee_enable and cam.controllee_format = VRT_IDF_UUID.
+     *
+     * \note Word 0 is most significant, i.e. the first 4 bytes of the UUID once the packet is in big endian.
+     */
+    uint32_t controllee_uuid[4];
+    /** Controller identifier. Activate by setting cam.controller_enable and cam.controller_format = VRT_IDF_WORD. */
+    uint32_t controller_id;
+    /**
+     * Controller UUID. Activate by setting cam.controller_enable and cam.controller_format = VRT_IDF_UUID.
+     *
+     * \note Word 0 is most significant, i.e. the first 4 bytes of the UUID once the packet is in big endian.
+     */
+    uint32_t controller_uuid[4];
+    /** Warnings (WIF). Only in validation and execution acknowledge packets with cam.warnings set. */
+    struct vrt_ack_responses warnings;
+    /** Errors (EIF). Only in validation and execution acknowledge packets with cam.errors set. */
+    struct vrt_ack_responses errors;
 };
 
 /**
  * VRT packet data.
  */
 struct vrt_packet {
-    struct vrt_header  header; /**< Header. */
-    struct vrt_fields  fields; /**< Fields. */
-    void*              body;   /**< Data payload for data packets, or custom context section for Ext context packets. */
-    int32_t            words_body;    /**< Number of 32-bit words used for body. */
-    struct vrt_trailer trailer;       /**< Trailer. */
-    struct vrt_if_context if_context; /**< IF context. */
+    struct vrt_header header; /**< Header. */
+    struct vrt_fields fields; /**< Fields. */
+    /** Data payload for data packets, or custom section for Ext context and Ext command packets. */
+    void*              body;
+    int32_t            words_body; /**< Number of 32-bit words used for body. */
+    struct vrt_trailer trailer;    /**< Trailer. */
+    /**
+     * IF context. Also the control fields of control and query-state acknowledge packets, and the indicator bits of
+     * cancellation packets.
+     */
+    struct vrt_if_context if_context;
+    /**
+     * Command section of command and Ext command packets. Must point to valid storage when reading or writing such
+     * packets, and may be NULL otherwise.
+     *
+     * \note A pointer, so that packets without a command section do not pay for its size.
+     */
+    struct vrt_command* command;
 };
 
 /**

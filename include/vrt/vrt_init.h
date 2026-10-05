@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 
+struct vrt_command;
 struct vrt_fields;
 struct vrt_header;
 struct vrt_if_context;
@@ -42,9 +43,19 @@ void vrt_init_trailer(struct vrt_trailer* trailer);
 void vrt_init_if_context(struct vrt_if_context* if_context);
 
 /**
+ * Initialize command section of command packets to a reasonable default state (VITA 49.2).
+ *
+ * \param command Command section.
+ */
+void vrt_init_command(struct vrt_command* command);
+
+/**
  * Initialize VRT packet to a reasonable default state.
  *
  * \param packet VRT packet.
+ *
+ * \note Sets packet->command to NULL. Point it to a command section, e.g. initialized by vrt_init_command(), for
+ *       command packets.
  */
 void vrt_init_packet(struct vrt_packet* packet);
 

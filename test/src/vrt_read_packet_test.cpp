@@ -315,12 +315,16 @@ TEST_F(ReadPacketTest, TrailerExtContext) {
 }
 
 TEST_F(ReadPacketTest, ValidationHeader) {
-    buf_[0] = 0x02000001;
+    /* Bit 25 was reserved in VITA 49.0 and is Nd0 since VITA 49.2, so use a trailer in a context packet instead */
+    buf_[0] = 0x54000002;
+    buf_[1] = 0x00000000;
 
-    ASSERT_EQ(vrt_read_packet(buf_.data(), 1, &p_, true), VRT_ERR_RESERVED);
-    ASSERT_EQ(vrt_read_packet(buf_.data(), 1, &p_, false), 1);
+    ASSERT_EQ(vrt_read_packet(buf_.data(), 2, &p_, true), VRT_ERR_TRAILER_IN_CONTEXT);
+    ASSERT_EQ(vrt_read_packet(buf_.data(), 2, &p_, false), 2);
     SCOPED_TRACE(::testing::UnitTest::GetInstance()->current_test_info()->name());
-    assert_header(p_.header, {{"packet_size", static_cast<uint16_t>(1)}});
+    assert_header(
+        p_.header,
+        {{"packet_type", VRT_PT_EXT_CONTEXT}, {"has.trailer", true}, {"packet_size", static_cast<uint16_t>(2)}});
     ASSERT_EQ(p_.words_body, 0);
     ASSERT_EQ(p_.body, nullptr);
 }

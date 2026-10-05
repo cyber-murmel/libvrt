@@ -1,6 +1,7 @@
 #include "vrt/vrt_read.h"
 
 #include "vrt/vrt_error_code.h"
+#include "vrt/vrt_init.h"
 #include "vrt/vrt_types.h"
 #include "vrt/vrt_util.h"
 #include "vrt/vrt_words.h"
@@ -50,31 +51,38 @@ int32_t vrt_read_header(const void* buf, int32_t words_buf, struct vrt_header* h
     /* Word in header section */
     uint32_t b = *((const uint32_t*)buf);
 
-    /* Decode in order from msb to lsb */
-    header->packet_type  = (enum vrt_packet_type)mskr(b, 28, 4);
-    header->has.class_id = vrt_u2b(mskr(b, 27, 1));
-    header->has.trailer  = vrt_u2b(mskr(b, 26, 1));
-    header->tsm          = (enum vrt_tsm)mskr(b, 24, 1);
-    header->tsi          = (enum vrt_tsi)mskr(b, 22, 2);
-    header->tsf          = (enum vrt_tsf)mskr(b, 20, 2);
-    header->packet_count = (uint8_t)mskr(b, 16, 4);
-    header->packet_size  = (uint16_t)mskr(b, 0, 16);
+    /* Decode in order from msb to lsb. Bits 26 to 24 depend on the packet type. */
+    header->packet_type      = (enum vrt_packet_type)mskr(b, 28, 4);
+    header->has.class_id     = vrt_u2b(mskr(b, 27, 1));
+    header->nd0              = vrt_u2b(mskr(b, 25, 1));
+    header->tsi              = (enum vrt_tsi)mskr(b, 22, 2);
+    header->tsf              = (enum vrt_tsf)mskr(b, 20, 2);
+    header->packet_count     = (uint8_t)mskr(b, 16, 4);
+    header->packet_size      = (uint16_t)mskr(b, 0, 16);
+    header->has.trailer      = false;
+    header->tsm              = VRT_TSM_FINE;
+    header->spectrum_or_time = VRT_SOT_TIME;
+    header->acknowledge      = false;
+    header->cancellation     = false;
+    if (vrt_is_data(header)) {
+        header->has.trailer      = vrt_u2b(mskr(b, 26, 1));
+        header->spectrum_or_time = (enum vrt_spectrum_or_time)mskr(b, 24, 1);
+    } else if (vrt_is_command(header)) {
+        /* Bit 25 is reserved in command packets, but is accepted since some implementations set it */
+        header->acknowledge  = vrt_u2b(mskr(b, 26, 1));
+        header->cancellation = vrt_u2b(mskr(b, 24, 1));
+    } else {
+        /* Context packets, and invalid packet types when not validating */
+        header->has.trailer = vrt_u2b(mskr(b, 26, 1));
+        header->tsm         = (enum vrt_tsm)mskr(b, 24, 1);
+    }
 
     if (validate) {
-        if (header->packet_type > VRT_PT_EXT_CONTEXT) {
+        if (header->packet_type > VRT_PT_EXT_COMMAND) {
             return VRT_ERR_INVALID_PACKET_TYPE;
         }
-        if (vrt_is_context(header)) {
-            if (header->has.trailer) {
-                return VRT_ERR_TRAILER_IN_CONTEXT;
-            }
-        } else {
-            if (header->tsm != VRT_TSM_FINE) {
-                return VRT_ERR_TSM_IN_DATA;
-            }
-        }
-        if ((b & 0x02000000U) != 0) {
-            return VRT_ERR_RESERVED;
+        if (vrt_is_context(header) && header->has.trailer) {
+            return VRT_ERR_TRAILER_IN_CONTEXT;
         }
     }
 
@@ -249,47 +257,92 @@ int32_t vrt_read_trailer(const void* buf, int32_t words_buf, struct vrt_trailer*
 }
 
 /**
- * Read IF context indicator field into its struct.
+ * Read indicator words, i.e. CIF0 and the optional CIF1 (VITA 49.2), into an indicator struct. Also used for the
+ * warning and error indicator words of acknowledge packets.
  *
- * \param b        Word to read from.
- * \param c        IF context to read into.
- * \param validate True if data shall be validated.
+ * \param b         Buffer to read from.
+ * \param words_buf Size of buf in 32-bit words.
+ * \param ind       Indicators to read into.
+ * \param change    Context field change indicator to read into, or NULL to ignore bit 31 of CIF0.
+ * \param validate  True if data shall be validated.
  *
  * \return Number of read words, or a negative number if error.
  */
-static int32_t if_context_read_indicator_field(uint32_t b, struct vrt_if_context* c, bool validate) {
-    c->context_field_change_indicator     = vrt_u2b(mskr(b, 31, 1));
-    c->has.reference_point_identifier     = vrt_u2b(mskr(b, 30, 1));
-    c->has.bandwidth                      = vrt_u2b(mskr(b, 29, 1));
-    c->has.if_reference_frequency         = vrt_u2b(mskr(b, 28, 1));
-    c->has.rf_reference_frequency         = vrt_u2b(mskr(b, 27, 1));
-    c->has.rf_reference_frequency_offset  = vrt_u2b(mskr(b, 26, 1));
-    c->has.if_band_offset                 = vrt_u2b(mskr(b, 25, 1));
-    c->has.reference_level                = vrt_u2b(mskr(b, 24, 1));
-    c->has.gain                           = vrt_u2b(mskr(b, 23, 1));
-    c->has.over_range_count               = vrt_u2b(mskr(b, 22, 1));
-    c->has.sample_rate                    = vrt_u2b(mskr(b, 21, 1));
-    c->has.timestamp_adjustment           = vrt_u2b(mskr(b, 20, 1));
-    c->has.timestamp_calibration_time     = vrt_u2b(mskr(b, 19, 1));
-    c->has.temperature                    = vrt_u2b(mskr(b, 18, 1));
-    c->has.device_identifier              = vrt_u2b(mskr(b, 17, 1));
-    c->has.state_and_event_indicators     = vrt_u2b(mskr(b, 16, 1));
-    c->has.data_packet_payload_format     = vrt_u2b(mskr(b, 15, 1));
-    c->has.formatted_gps_geolocation      = vrt_u2b(mskr(b, 14, 1));
-    c->has.formatted_ins_geolocation      = vrt_u2b(mskr(b, 13, 1));
-    c->has.ecef_ephemeris                 = vrt_u2b(mskr(b, 12, 1));
-    c->has.relative_ephemeris             = vrt_u2b(mskr(b, 11, 1));
-    c->has.ephemeris_reference_identifier = vrt_u2b(mskr(b, 10, 1));
-    c->has.gps_ascii                      = vrt_u2b(mskr(b, 9, 1));
-    c->has.context_association_lists      = vrt_u2b(mskr(b, 8, 1));
+static int32_t read_indicator_words(const uint32_t*                b,
+                                    int32_t                        words_buf,
+                                    struct vrt_context_indicators* ind,
+                                    bool*                          change,
+                                    bool                           validate) {
+    if (words_buf < 1) {
+        return VRT_ERR_BUFFER_SIZE;
+    }
 
+    uint32_t cif0 = b[0];
+
+    if (change != NULL) {
+        *change = vrt_u2b(mskr(cif0, 31, 1));
+    }
+    ind->reference_point_identifier     = vrt_u2b(mskr(cif0, 30, 1));
+    ind->bandwidth                      = vrt_u2b(mskr(cif0, 29, 1));
+    ind->if_reference_frequency         = vrt_u2b(mskr(cif0, 28, 1));
+    ind->rf_reference_frequency         = vrt_u2b(mskr(cif0, 27, 1));
+    ind->rf_reference_frequency_offset  = vrt_u2b(mskr(cif0, 26, 1));
+    ind->if_band_offset                 = vrt_u2b(mskr(cif0, 25, 1));
+    ind->reference_level                = vrt_u2b(mskr(cif0, 24, 1));
+    ind->gain                           = vrt_u2b(mskr(cif0, 23, 1));
+    ind->over_range_count               = vrt_u2b(mskr(cif0, 22, 1));
+    ind->sample_rate                    = vrt_u2b(mskr(cif0, 21, 1));
+    ind->timestamp_adjustment           = vrt_u2b(mskr(cif0, 20, 1));
+    ind->timestamp_calibration_time     = vrt_u2b(mskr(cif0, 19, 1));
+    ind->temperature                    = vrt_u2b(mskr(cif0, 18, 1));
+    ind->device_identifier              = vrt_u2b(mskr(cif0, 17, 1));
+    ind->state_and_event_indicators     = vrt_u2b(mskr(cif0, 16, 1));
+    ind->data_packet_payload_format     = vrt_u2b(mskr(cif0, 15, 1));
+    ind->formatted_gps_geolocation      = vrt_u2b(mskr(cif0, 14, 1));
+    ind->formatted_ins_geolocation      = vrt_u2b(mskr(cif0, 13, 1));
+    ind->ecef_ephemeris                 = vrt_u2b(mskr(cif0, 12, 1));
+    ind->relative_ephemeris             = vrt_u2b(mskr(cif0, 11, 1));
+    ind->ephemeris_reference_identifier = vrt_u2b(mskr(cif0, 10, 1));
+    ind->gps_ascii                      = vrt_u2b(mskr(cif0, 9, 1));
+    ind->context_association_lists      = vrt_u2b(mskr(cif0, 8, 1));
+
+    /* Unknown field sizes make the rest of the packet unreadable, so this is checked even without validation */
+    if ((cif0 & VRT_CIF0_UNSUPPORTED) != 0) {
+        return VRT_ERR_UNSUPPORTED_FIELD;
+    }
     if (validate) {
-        if ((b & 0x000000FFU) != 0) {
+        if ((cif0 & VRT_CIF0_RESERVED) != 0) {
             return VRT_ERR_RESERVED;
         }
     }
 
-    return 1;
+    if ((cif0 & VRT_CIF0_CIF1_ENABLE) == 0) {
+        ind->health_status       = false;
+        ind->v49_spec_compliance = false;
+        ind->version_build_code  = false;
+        return 1;
+    }
+
+    if (words_buf < 2) {
+        return VRT_ERR_BUFFER_SIZE;
+    }
+
+    uint32_t cif1 = b[1];
+
+    ind->health_status       = (cif1 & VRT_CIF1_HEALTH_STATUS) != 0;
+    ind->v49_spec_compliance = (cif1 & VRT_CIF1_V49_SPEC_COMPLIANCE) != 0;
+    ind->version_build_code  = (cif1 & VRT_CIF1_VERSION_BUILD_CODE) != 0;
+
+    if ((cif1 & VRT_CIF1_UNSUPPORTED) != 0) {
+        return VRT_ERR_UNSUPPORTED_FIELD;
+    }
+    if (validate) {
+        if ((cif1 & VRT_CIF1_RESERVED) != 0) {
+            return VRT_ERR_RESERVED;
+        }
+    }
+
+    return 2;
 }
 
 /**
@@ -741,23 +794,21 @@ static int32_t if_context_read_association_lists(bool has, const uint32_t* b, st
 int32_t vrt_read_if_context(const void* buf, int32_t words_buf, struct vrt_if_context* if_context, bool validate) {
     /* Cannot count words here since the IF context section hasn't been read yet */
 
-    int32_t words = 1;
-
-    if (words_buf < words) {
-        return VRT_ERR_BUFFER_SIZE;
-    }
-
     const uint32_t* b = (const uint32_t*)buf;
 
     /* Go from msb to lsb. Make sure to zero fields if not present, just to be sure. */
-    int32_t rv = if_context_read_indicator_field(b[0], if_context, validate);
+    int32_t rv =
+        read_indicator_words(b, words_buf, &if_context->has, &if_context->context_field_change_indicator, validate);
     if (rv < 0) {
         return rv;
     }
     b += rv;
 
-    /* Replace context_words here instead of increasing it */
-    words = vrt_words_if_context_indicator(&if_context->has);
+    /*
+     * Fixed size part, including CIF1 fields that follow the variable size CIF0 fields. Use the number of indicator
+     * words actually read, since CIF1 may be enabled without any field.
+     */
+    int32_t words = vrt_words_if_context_indicator(&if_context->has) - vrt_words_indicator_words(&if_context->has) + rv;
     if (words_buf < words) {
         return VRT_ERR_BUFFER_SIZE;
     }
@@ -903,7 +954,9 @@ int32_t vrt_read_if_context(const void* buf, int32_t words_buf, struct vrt_if_co
         if_context->device_identifier.oui         = 0;
         if_context->device_identifier.device_code = 0;
     }
-    rv = if_context_read_state_and_event_indicators(if_context->has.state_and_event_indicators, b[0],
+    /* Do not touch b[0] when absent, since it may be past the end of the buffer */
+    rv = if_context_read_state_and_event_indicators(if_context->has.state_and_event_indicators,
+                                                    if_context->has.state_and_event_indicators ? b[0] : 0,
                                                     &if_context->state_and_event_indicators, validate);
     if (rv < 0) {
         return rv;
@@ -944,6 +997,12 @@ int32_t vrt_read_if_context(const void* buf, int32_t words_buf, struct vrt_if_co
         if_context->ephemeris_reference_identifier = 0;
     }
 
+    /* Variable size fields. Check that their size words, and then their contents, are within the buffer. */
+    if (if_context->has.gps_ascii) {
+        if (words_buf - words < 2 || b[1] > (uint32_t)(words_buf - words - 2)) {
+            return VRT_ERR_BUFFER_SIZE;
+        }
+    }
     rv = if_context_read_gps_ascii(if_context->has.gps_ascii, b, &if_context->gps_ascii, validate);
     if (rv < 0) {
         return rv;
@@ -951,13 +1010,296 @@ int32_t vrt_read_if_context(const void* buf, int32_t words_buf, struct vrt_if_co
     b += rv;
     words += rv;
 
-    /* No need to increase b here since it is last */
+    if (if_context->has.context_association_lists && words_buf - words < 2) {
+        return VRT_ERR_BUFFER_SIZE;
+    }
     rv = if_context_read_association_lists(if_context->has.context_association_lists, b,
                                            &if_context->context_association_lists);
     if (rv < 0) {
         return rv;
     }
+    b += rv;
     words += rv;
+    if (words_buf < words) {
+        return VRT_ERR_BUFFER_SIZE;
+    }
+
+    /* CIF1 fields (VITA 49.2) */
+    if (if_context->has.health_status) {
+        if_context->health_status = b[0];
+        b += 1;
+    } else {
+        if_context->health_status = 0;
+    }
+    if (if_context->has.v49_spec_compliance) {
+        if_context->v49_spec_compliance = (enum vrt_v49_spec_compliance)b[0];
+
+        if (validate) {
+            if (b[0] < VRT_V49_0 || b[0] > VRT_V49_2) {
+                return VRT_ERR_INVALID_V49_SPEC_COMPLIANCE;
+            }
+        }
+
+        b += 1;
+    } else {
+        if_context->v49_spec_compliance = VRT_V49_2;
+    }
+    if (if_context->has.version_build_code) {
+        if_context->version_build_code.year         = (uint8_t)mskr(b[0], 25, 7);
+        if_context->version_build_code.day          = (uint16_t)mskr(b[0], 16, 9);
+        if_context->version_build_code.revision     = (uint8_t)mskr(b[0], 10, 6);
+        if_context->version_build_code.user_defined = (uint16_t)mskr(b[0], 0, 10);
+        /* No need to increase b here since it is last */
+    } else {
+        if_context->version_build_code.year         = 0;
+        if_context->version_build_code.day          = 0;
+        if_context->version_build_code.revision     = 0;
+        if_context->version_build_code.user_defined = 0;
+    }
+
+    return words;
+}
+
+/**
+ * Read the indicator words of a cancellation packet (VITA 49.2), which have no fields. All field values are set to
+ * their defaults.
+ *
+ * \param buf        Buffer to read from.
+ * \param words_buf  Size of buf in 32-bit words.
+ * \param if_context IF context struct to read the indicators into.
+ * \param validate   True if data shall be validated.
+ *
+ * \return Number of read 32-bit words, or a negative number if error.
+ */
+static int32_t read_cancellation(const uint32_t*        buf,
+                                 int32_t                words_buf,
+                                 struct vrt_if_context* if_context,
+                                 bool                   validate) {
+    vrt_init_if_context(if_context);
+    return read_indicator_words(buf, words_buf, &if_context->has, &if_context->context_field_change_indicator,
+                                validate);
+}
+
+/**
+ * Read warning or error responses of an acknowledge packet (VITA 49.2), i.e. one response word per field in the
+ * indicator words.
+ *
+ * \param b Buffer to read from, i.e. the first response word.
+ * \param r Responses to read into. The indicators must already be read.
+ *
+ * \return Number of read 32-bit words.
+ */
+static int32_t read_ack_response_words(const uint32_t* b, struct vrt_ack_responses* r) {
+    const struct vrt_context_indicators* h = &r->has;
+
+    uint32_t* const dst[] = {&r->reference_point_identifier,
+                             &r->bandwidth,
+                             &r->if_reference_frequency,
+                             &r->rf_reference_frequency,
+                             &r->rf_reference_frequency_offset,
+                             &r->if_band_offset,
+                             &r->reference_level,
+                             &r->gain,
+                             &r->over_range_count,
+                             &r->sample_rate,
+                             &r->timestamp_adjustment,
+                             &r->timestamp_calibration_time,
+                             &r->temperature,
+                             &r->device_identifier,
+                             &r->state_and_event_indicators,
+                             &r->data_packet_payload_format,
+                             &r->formatted_gps_geolocation,
+                             &r->formatted_ins_geolocation,
+                             &r->ecef_ephemeris,
+                             &r->relative_ephemeris,
+                             &r->ephemeris_reference_identifier,
+                             &r->gps_ascii,
+                             &r->context_association_lists,
+                             &r->health_status,
+                             &r->v49_spec_compliance,
+                             &r->version_build_code};
+    const bool      has[] = {h->reference_point_identifier,
+                             h->bandwidth,
+                             h->if_reference_frequency,
+                             h->rf_reference_frequency,
+                             h->rf_reference_frequency_offset,
+                             h->if_band_offset,
+                             h->reference_level,
+                             h->gain,
+                             h->over_range_count,
+                             h->sample_rate,
+                             h->timestamp_adjustment,
+                             h->timestamp_calibration_time,
+                             h->temperature,
+                             h->device_identifier,
+                             h->state_and_event_indicators,
+                             h->data_packet_payload_format,
+                             h->formatted_gps_geolocation,
+                             h->formatted_ins_geolocation,
+                             h->ecef_ephemeris,
+                             h->relative_ephemeris,
+                             h->ephemeris_reference_identifier,
+                             h->gps_ascii,
+                             h->context_association_lists,
+                             h->health_status,
+                             h->v49_spec_compliance,
+                             h->version_build_code};
+
+    int32_t words = 0;
+    for (uint32_t i = 0; i < sizeof(has) / sizeof(has[0]); ++i) {
+        if (has[i]) {
+            *dst[i] = b[words];
+            words += 1;
+        } else {
+            *dst[i] = 0;
+        }
+    }
+
+    return words;
+}
+
+/**
+ * Read the Control/Acknowledge mode word (VITA 49.2).
+ *
+ * \param header   Header, which tells if it is an acknowledge packet.
+ * \param b        Word to read from.
+ * \param cam      CAM to read into.
+ * \param validate True if data shall be validated.
+ *
+ * \return Number of read 32-bit words, i.e. 1, or a negative number if error.
+ */
+static int32_t read_cam(const struct vrt_header* header, uint32_t b, struct vrt_cam* cam, bool validate) {
+    cam->controllee_enable     = vrt_u2b(mskr(b, 31, 1));
+    cam->controllee_format     = (enum vrt_identifier_format)mskr(b, 30, 1);
+    cam->controller_enable     = vrt_u2b(mskr(b, 29, 1));
+    cam->controller_format     = (enum vrt_identifier_format)mskr(b, 28, 1);
+    cam->permit_partial        = vrt_u2b(mskr(b, 27, 1));
+    cam->permit_warnings       = vrt_u2b(mskr(b, 26, 1));
+    cam->permit_errors         = vrt_u2b(mskr(b, 25, 1));
+    cam->action_mode           = (enum vrt_action_mode)mskr(b, 23, 2);
+    cam->nack_only             = vrt_u2b(mskr(b, 22, 1));
+    cam->validation            = vrt_u2b(mskr(b, 20, 1));
+    cam->execution             = vrt_u2b(mskr(b, 19, 1));
+    cam->query_state           = vrt_u2b(mskr(b, 18, 1));
+    cam->warnings              = vrt_u2b(mskr(b, 17, 1));
+    cam->errors                = vrt_u2b(mskr(b, 16, 1));
+    cam->timing_control        = (enum vrt_timing_control)mskr(b, 12, 3);
+    cam->partial_action        = vrt_u2b(mskr(b, 11, 1));
+    cam->scheduled_or_executed = vrt_u2b(mskr(b, 10, 1));
+
+    if (validate) {
+        if ((b & VRT_CAM_RESERVED) != 0) {
+            return VRT_ERR_RESERVED;
+        }
+        if (cam->action_mode > VRT_AM_EXECUTE) {
+            return VRT_ERR_INVALID_ACTION_MODE;
+        }
+        if (cam->timing_control > VRT_TC_EARLY_LATE && cam->timing_control != VRT_TC_TIMING_ISSUES) {
+            return VRT_ERR_INVALID_TIMING_CONTROL;
+        }
+        if (header->acknowledge) {
+            if (vrt_b2u(cam->validation) + vrt_b2u(cam->execution) + vrt_b2u(cam->query_state) != 1) {
+                return VRT_ERR_ACK_SUBTYPE;
+            }
+        } else {
+            if (cam->partial_action || cam->scheduled_or_executed || cam->timing_control == VRT_TC_TIMING_ISSUES) {
+                return VRT_ERR_ACK_FIELD_IN_CONTROL;
+            }
+        }
+    }
+
+    return 1;
+}
+
+/**
+ * Read a controllee or controller identifier (VITA 49.2).
+ *
+ * \param enable True if the identifier is included.
+ * \param format Identifier format.
+ * \param b      Buffer to read from.
+ * \param id     32-bit identifier to read into.
+ * \param uuid   UUID to read into.
+ *
+ * \return Number of read 32-bit words.
+ */
+static int32_t read_identifier(bool                       enable,
+                               enum vrt_identifier_format format,
+                               const uint32_t*            b,
+                               uint32_t*                  id,
+                               uint32_t*                  uuid) {
+    int32_t words = vrt_words_identifier(enable, format);
+
+    *id = words == 1 ? b[0] : 0;
+    for (int32_t i = 0; i < 4; ++i) {
+        uuid[i] = words == 4 ? b[i] : 0;
+    }
+
+    return words;
+}
+
+int32_t vrt_read_command(const struct vrt_header* header,
+                         const void*              buf,
+                         int32_t                  words_buf,
+                         struct vrt_command*      command,
+                         bool                     validate) {
+    /* CAM and message ID */
+    if (words_buf < 2) {
+        return VRT_ERR_BUFFER_SIZE;
+    }
+
+    const uint32_t* b = (const uint32_t*)buf;
+
+    int32_t rv = read_cam(header, b[0], &command->cam, validate);
+    if (rv < 0) {
+        return rv;
+    }
+    command->message_id = b[1];
+
+    const struct vrt_cam* cam   = &command->cam;
+    int32_t               words = 2 + vrt_words_identifier(cam->controllee_enable, cam->controllee_format) +
+                    vrt_words_identifier(cam->controller_enable, cam->controller_format);
+    if (words_buf < words) {
+        return VRT_ERR_BUFFER_SIZE;
+    }
+    b += 2;
+    b += read_identifier(cam->controllee_enable, cam->controllee_format, b, &command->controllee_id,
+                         command->controllee_uuid);
+    b += read_identifier(cam->controller_enable, cam->controller_format, b, &command->controller_id,
+                         command->controller_uuid);
+
+    /* Warning and error indicator words, followed by all warning and then all error response words */
+    bool has_warnings = vrt_has_ack_responses(header, cam) && cam->warnings;
+    bool has_errors   = vrt_has_ack_responses(header, cam) && cam->errors;
+
+    struct vrt_context_indicators* wif = &command->warnings.has;
+    struct vrt_context_indicators* eif = &command->errors.has;
+    vrt_init_context_indicators(wif);
+    vrt_init_context_indicators(eif);
+    if (has_warnings) {
+        rv = read_indicator_words(b, words_buf - words, wif, NULL, validate);
+        if (rv < 0) {
+            return rv;
+        }
+        b += rv;
+        words += rv;
+    }
+    if (has_errors) {
+        rv = read_indicator_words(b, words_buf - words, eif, NULL, validate);
+        if (rv < 0) {
+            return rv;
+        }
+        b += rv;
+        words += rv;
+    }
+
+    /* Response words. Indicators of absent sections are all false, so they count as zero words. */
+    int32_t words_responses = vrt_words_ack_response_words(wif) + vrt_words_ack_response_words(eif);
+    if (words_buf - words < words_responses) {
+        return VRT_ERR_BUFFER_SIZE;
+    }
+    b += read_ack_response_words(b, &command->warnings);
+    words += words_responses;
+    (void)read_ack_response_words(b, &command->errors);
 
     return words;
 }
@@ -980,7 +1322,20 @@ int32_t vrt_read_packet(void* buf, int32_t words_buf, struct vrt_packet* packet,
     }
     words_total += words_fields;
 
-    bool has_trailer = !vrt_is_context(&packet->header) && packet->header.has.trailer;
+    bool has_trailer = vrt_words_trailer(&packet->header) != 0;
+
+    /* Command section (VITA 49.2) */
+    if (vrt_is_command(&packet->header)) {
+        if (packet->command == NULL) {
+            return VRT_ERR_MISSING_COMMAND;
+        }
+        int32_t words_command =
+            vrt_read_command(&packet->header, b + words_total, words_buf - words_total, packet->command, validate);
+        if (words_command < 0) {
+            return words_command;
+        }
+        words_total += words_command;
+    }
 
     /* Body */
     switch (packet->header.packet_type) {
@@ -988,7 +1343,8 @@ int32_t vrt_read_packet(void* buf, int32_t words_buf, struct vrt_packet* packet,
         case VRT_PT_IF_DATA_WITH_STREAM_ID:
         case VRT_PT_EXT_DATA_WITHOUT_STREAM_ID:
         case VRT_PT_EXT_DATA_WITH_STREAM_ID:
-        case VRT_PT_EXT_CONTEXT: {
+        case VRT_PT_EXT_CONTEXT:
+        case VRT_PT_EXT_COMMAND: {
             packet->words_body = packet->header.packet_size - words_total - (has_trailer ? 1 : 0);
 
             /* Body is actually optional */
@@ -1018,6 +1374,34 @@ int32_t vrt_read_packet(void* buf, int32_t words_buf, struct vrt_packet* packet,
             words_total += words_if_context;
 
             /* Set some words to default */
+            packet->words_body = 0;
+            packet->body       = NULL;
+
+            break;
+        }
+        case VRT_PT_COMMAND: {
+            int32_t words_payload = 0;
+            switch (vrt_command_payload(&packet->header, &packet->command->cam)) {
+                case VRT_CP_CONTEXT: {
+                    words_payload =
+                        vrt_read_if_context(b + words_total, words_buf - words_total, &packet->if_context, validate);
+                    break;
+                }
+                case VRT_CP_INDICATORS: {
+                    words_payload =
+                        read_cancellation(b + words_total, words_buf - words_total, &packet->if_context, validate);
+                    break;
+                }
+                default: {
+                    /* Warning and error responses are part of the command section */
+                    break;
+                }
+            }
+            if (words_payload < 0) {
+                return words_payload;
+            }
+            words_total += words_payload;
+
             packet->words_body = 0;
             packet->body       = NULL;
 

@@ -1,0 +1,6 @@
+name: libvrt
+build:
+  cmake: zephyr
+  kconfig: zephyr/Kconfig
+tests:
+  - zephyr/tests

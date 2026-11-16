@@ -1,0 +1,6 @@
+common:
+  tags: libvrt
+  integration_platforms:
+    - xiao_esp32s3/esp32s3/procpu
+tests:
+  libraries.libvrt: {}

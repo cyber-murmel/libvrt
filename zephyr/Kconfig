@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+
+config LIBVRT
+	bool "libvrt VITA 49 Radio Transport packets"
+	help
+	  Encoder and decoder for ANSI/VITA 49 Radio Transport (VRT) packets.
+	  Words are read and written in CPU byte order; swap them to big
+	  endian for standard conforming packets on little endian CPUs.

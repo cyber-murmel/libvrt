@@ -7,6 +7,7 @@
 extern "C" {
 #endif
 
+struct vrt_command;
 struct vrt_header;
 struct vrt_if_context;
 struct vrt_packet;
@@ -60,9 +61,21 @@ int32_t vrt_words_trailer(const struct vrt_header* header);
 int32_t vrt_words_if_context(const struct vrt_if_context* if_context);
 
 /**
+ * Calculate size of the command section of command and Ext command packets in 32-bit words (VITA 49.2), i.e. the CAM,
+ * message ID, identifiers, and for validation and execution acknowledge packets the warning and error words.
+ *
+ * \param header  Header, which tells if it is an acknowledge packet.
+ * \param command Command section.
+ *
+ * \return Number of 32-bit words it consists of.
+ */
+int32_t vrt_words_command(const struct vrt_header* header, const struct vrt_command* command);
+
+/**
  * Calculate size of VRT packet in 32-bit words.
  *
  * \note This does not look at the packet_size field in the header.
+ * \note For command and Ext command packets, the command section is not counted if packet->command is NULL.
  *
  * \param packet VRT packet.
  *

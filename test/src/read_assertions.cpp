@@ -88,6 +88,10 @@ void assert_header(const vrt_header& h, const std::map<std::string, std::any>& v
     ASSERT_EQ(h.has.class_id, get_val<bool>(&val_cp, "has.class_id", false));
     ASSERT_EQ(h.has.trailer, get_val<bool>(&val_cp, "has.trailer", false));
     ASSERT_EQ(h.tsm, get_val<vrt_tsm>(&val_cp, "tsm", VRT_TSM_FINE));
+    ASSERT_EQ(h.nd0, get_val<bool>(&val_cp, "nd0", false));
+    ASSERT_EQ(h.spectrum_or_time, get_val<vrt_spectrum_or_time>(&val_cp, "spectrum_or_time", VRT_SOT_TIME));
+    ASSERT_EQ(h.acknowledge, get_val<bool>(&val_cp, "acknowledge", false));
+    ASSERT_EQ(h.cancellation, get_val<bool>(&val_cp, "cancellation", false));
     ASSERT_EQ(Hex(h.tsi), Hex(get_val<vrt_tsi>(&val_cp, "tsi", VRT_TSI_NONE)));
     ASSERT_EQ(Hex(h.tsf), Hex(get_val<vrt_tsf>(&val_cp, "tsf", VRT_TSF_NONE)));
     ASSERT_EQ(Hex(h.packet_count), Hex(get_val<uint8_t>(&val_cp, "packet_count", 0)));
@@ -260,6 +264,9 @@ void assert_if_context(const vrt_if_context& c, const std::map<std::string, std:
               get_val<bool>(&val_cp, "has.ephemeris_reference_identifier", false));
     ASSERT_EQ(c.has.gps_ascii, get_val<bool>(&val_cp, "has.gps_ascii", false));
     ASSERT_EQ(c.has.context_association_lists, get_val<bool>(&val_cp, "has.context_association_lists", false));
+    ASSERT_EQ(c.has.health_status, get_val<bool>(&val_cp, "has.health_status", false));
+    ASSERT_EQ(c.has.v49_spec_compliance, get_val<bool>(&val_cp, "has.v49_spec_compliance", false));
+    ASSERT_EQ(c.has.version_build_code, get_val<bool>(&val_cp, "has.version_build_code", false));
 
     ASSERT_EQ(Hex(c.reference_point_identifier), Hex(get_val<uint32_t>(&val_cp, "reference_point_identifier", 0)));
     ASSERT_DOUBLE_EQ(c.bandwidth, get_val<double>(&val_cp, "bandwidth", 0.0));
@@ -372,6 +379,14 @@ void assert_if_context(const vrt_if_context& c, const std::map<std::string, std:
                   &val_cp, "context_association_lists.asynchronous_channel_context_association_list", nullptr));
     ASSERT_EQ(c.context_association_lists.asynchronous_channel_tag_list,
               get_val<const uint32_t*>(&val_cp, "context_association_lists.asynchronous_channel_tag_list", nullptr));
+    ASSERT_EQ(Hex(c.health_status), Hex(get_val<uint32_t>(&val_cp, "health_status", 0)));
+    ASSERT_EQ(Hex(c.v49_spec_compliance),
+              Hex(get_val<vrt_v49_spec_compliance>(&val_cp, "v49_spec_compliance", VRT_V49_2)));
+    ASSERT_EQ(Hex(c.version_build_code.year), Hex(get_val<uint8_t>(&val_cp, "version_build_code.year", 0)));
+    ASSERT_EQ(Hex(c.version_build_code.day), Hex(get_val<uint16_t>(&val_cp, "version_build_code.day", 0)));
+    ASSERT_EQ(Hex(c.version_build_code.revision), Hex(get_val<uint8_t>(&val_cp, "version_build_code.revision", 0)));
+    ASSERT_EQ(Hex(c.version_build_code.user_defined),
+              Hex(get_val<uint16_t>(&val_cp, "version_build_code.user_defined", 0)));
 
     check_remaining(val_cp);
 }

@@ -9,14 +9,18 @@
 #include <stddef.h>
 
 void vrt_init_header(struct vrt_header* header) {
-    header->packet_type  = VRT_PT_IF_DATA_WITHOUT_STREAM_ID;
-    header->has.class_id = false;
-    header->has.trailer  = false;
-    header->tsm          = VRT_TSM_FINE;
-    header->tsi          = VRT_TSI_NONE;
-    header->tsf          = VRT_TSF_NONE;
-    header->packet_count = 0;
-    header->packet_size  = 0;
+    header->packet_type      = VRT_PT_IF_DATA_WITHOUT_STREAM_ID;
+    header->has.class_id     = false;
+    header->has.trailer      = false;
+    header->tsm              = VRT_TSM_FINE;
+    header->nd0              = false;
+    header->spectrum_or_time = VRT_SOT_TIME;
+    header->acknowledge      = false;
+    header->cancellation     = false;
+    header->tsi              = VRT_TSI_NONE;
+    header->tsf              = VRT_TSF_NONE;
+    header->packet_count     = 0;
+    header->packet_size      = 0;
 }
 
 void vrt_init_fields(struct vrt_fields* fields) {
@@ -151,6 +155,9 @@ void vrt_init_if_context(struct vrt_if_context* if_context) {
     if_context->has.ephemeris_reference_identifier = false;
     if_context->has.gps_ascii                      = false;
     if_context->has.context_association_lists      = false;
+    if_context->has.health_status                  = false;
+    if_context->has.v49_spec_compliance            = false;
+    if_context->has.version_build_code             = false;
 
     if_context->reference_point_identifier    = 0;
     if_context->bandwidth                     = 0.0;
@@ -220,6 +227,80 @@ void vrt_init_if_context(struct vrt_if_context* if_context) {
     if_context->context_association_lists.vector_component_context_association_list     = NULL;
     if_context->context_association_lists.asynchronous_channel_context_association_list = NULL;
     if_context->context_association_lists.asynchronous_channel_tag_list                 = NULL;
+
+    if_context->health_status                   = 0;
+    if_context->v49_spec_compliance             = VRT_V49_2;
+    if_context->version_build_code.year         = 0;
+    if_context->version_build_code.day          = 0;
+    if_context->version_build_code.revision     = 0;
+    if_context->version_build_code.user_defined = 0;
+}
+
+/**
+ * Initialize warning or error responses of acknowledge packets.
+ *
+ * \param r Responses.
+ */
+static void init_ack_responses(struct vrt_ack_responses* r) {
+    vrt_init_context_indicators(&r->has);
+    r->reference_point_identifier     = 0;
+    r->bandwidth                      = 0;
+    r->if_reference_frequency         = 0;
+    r->rf_reference_frequency         = 0;
+    r->rf_reference_frequency_offset  = 0;
+    r->if_band_offset                 = 0;
+    r->reference_level                = 0;
+    r->gain                           = 0;
+    r->over_range_count               = 0;
+    r->sample_rate                    = 0;
+    r->timestamp_adjustment           = 0;
+    r->timestamp_calibration_time     = 0;
+    r->temperature                    = 0;
+    r->device_identifier              = 0;
+    r->state_and_event_indicators     = 0;
+    r->data_packet_payload_format     = 0;
+    r->formatted_gps_geolocation      = 0;
+    r->formatted_ins_geolocation      = 0;
+    r->ecef_ephemeris                 = 0;
+    r->relative_ephemeris             = 0;
+    r->ephemeris_reference_identifier = 0;
+    r->gps_ascii                      = 0;
+    r->context_association_lists      = 0;
+    r->health_status                  = 0;
+    r->v49_spec_compliance            = 0;
+    r->version_build_code             = 0;
+}
+
+void vrt_init_command(struct vrt_command* command) {
+    struct vrt_cam* cam = &command->cam;
+
+    cam->controllee_enable     = false;
+    cam->controllee_format     = VRT_IDF_WORD;
+    cam->controller_enable     = false;
+    cam->controller_format     = VRT_IDF_WORD;
+    cam->permit_partial        = false;
+    cam->permit_warnings       = false;
+    cam->permit_errors         = false;
+    cam->action_mode           = VRT_AM_NO_ACTION;
+    cam->nack_only             = false;
+    cam->validation            = false;
+    cam->execution             = false;
+    cam->query_state           = false;
+    cam->warnings              = false;
+    cam->errors                = false;
+    cam->timing_control        = VRT_TC_IGNORE;
+    cam->partial_action        = false;
+    cam->scheduled_or_executed = false;
+
+    command->message_id    = 0;
+    command->controllee_id = 0;
+    command->controller_id = 0;
+    for (int i = 0; i < 4; ++i) {
+        command->controllee_uuid[i] = 0;
+        command->controller_uuid[i] = 0;
+    }
+    init_ack_responses(&command->warnings);
+    init_ack_responses(&command->errors);
 }
 
 void vrt_init_packet(struct vrt_packet* packet) {
@@ -229,4 +310,5 @@ void vrt_init_packet(struct vrt_packet* packet) {
     packet->words_body = 0;
     vrt_init_trailer(&packet->trailer);
     vrt_init_if_context(&packet->if_context);
+    packet->command = NULL;
 }

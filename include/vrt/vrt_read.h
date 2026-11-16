@@ -10,6 +10,7 @@
 extern "C" {
 #endif
 
+struct vrt_command;
 struct vrt_fields;
 struct vrt_header;
 struct vrt_if_context;
@@ -26,12 +27,14 @@ struct vrt_trailer;
  *
  * \return Number of read 32-bit words, or a negative number if error.
  * \retval VRT_ERR_BUFFER_SIZE          Buffer is too small.
- * \retval VRT_ERR_RESERVED             One or multiple reserved bits are set.
  * \retval VRT_ERR_INVALID_PACKET_TYPE  Packet type is an invalid value.
  * \retval VRT_ERR_TRAILER_IN_CONTEXT   Context packet has trailer bit set.
- * \retval VRT_ERR_TSM_IN_DATA          Data packet has TSM bit set.
  *
- * \note Requires input buffer data to be byte swapped if platform endianess isn't big endian (network order).
+ * \note Requires input buffer data to be byte swapped if platform endianess isn't big endian (network order). See
+ *       vrt_from_big_endian().
+ * \note Header bits 26 to 24 are decoded per packet type (VITA 49.2): trailer, Nd0 and spectrum or time for data
+ *       packets, Nd0 and TSM for context packets, and acknowledge and cancellation for command packets. Bit 25 is read
+ *       into nd0 for command packets too, where it is reserved, since some implementations set it.
  */
 VRT_WARN_UNUSED
 int32_t vrt_read_header(const void* buf, int32_t words_buf, struct vrt_header* header, bool validate);
@@ -107,6 +110,12 @@ int32_t vrt_read_trailer(const void* buf, int32_t words_buf, struct vrt_trailer*
  *                                                      degrees).
  * \retval VRT_ERR_BOUNDS_MAGNETIC_VARIATION            Magnetic variation is outside valid bounds (< -180 or > 180
  *                                                      degrees).
+ * \retval VRT_ERR_UNSUPPORTED_FIELD                    CIF2, CIF3, CIF7 or an unsupported CIF1 field is enabled.
+ *                                                      Also returned without validation.
+ * \retval VRT_ERR_INVALID_V49_SPEC_COMPLIANCE          V49 spec compliance is an invalid value.
+ *
+ * \note The CIF1 word (VITA 49.2) is read when CIF0 enables it. Only its Health status, V49 spec compliance, and
+ *       Version and build code fields are supported.
  *
  * \warning Fields represented as double but with an underlying 64-bit fixed precision format, i.e. bandwidth,
  *          if_reference_frequency, rf_reference_frequency, rf_reference_frequency_offset, if_band_offset, and
@@ -114,6 +123,37 @@ int32_t vrt_read_trailer(const void* buf, int32_t words_buf, struct vrt_trailer*
  */
 VRT_WARN_UNUSED
 int32_t vrt_read_if_context(const void* buf, int32_t words_buf, struct vrt_if_context* if_context, bool validate);
+
+/**
+ * Low-level function that reads the command section of command and Ext command packets (VITA 49.2), i.e. CAM, message
+ * ID, controllee and controller identifiers, and for validation and execution acknowledge packets the warning and
+ * error indicator and response words.
+ *
+ * \param header    Header, which tells if it is an acknowledge packet.
+ * \param buf       Buffer to read from. This must point to the CAM word, i.e. directly following the fields section.
+ * \param words_buf Size of buf in 32-bit words.
+ * \param command   Command section to read into.
+ * \param validate  True if validation shall be done. If false, only buffer size is validated.
+ *
+ * \return Number of read 32-bit words, or a negative number if error.
+ * \retval VRT_ERR_BUFFER_SIZE            Buffer is too small.
+ * \retval VRT_ERR_RESERVED               One or multiple reserved bits are set.
+ * \retval VRT_ERR_INVALID_ACTION_MODE    Action mode is an invalid value.
+ * \retval VRT_ERR_INVALID_TIMING_CONTROL Timing control is an invalid value.
+ * \retval VRT_ERR_ACK_SUBTYPE            Acknowledge packet does not set exactly one of validation, execution and
+ *                                        query-state.
+ * \retval VRT_ERR_ACK_FIELD_IN_CONTROL   Acknowledge-only CAM field is set in a non acknowledge packet.
+ * \retval VRT_ERR_UNSUPPORTED_FIELD      Warning or error indicator words enable an unsupported field or word. Also
+ *                                        returned without validation.
+ *
+ * \note Bit 31 of the warning and error indicator words is ignored.
+ */
+VRT_WARN_UNUSED
+int32_t vrt_read_command(const struct vrt_header* header,
+                         const void*              buf,
+                         int32_t                  words_buf,
+                         struct vrt_command*      command,
+                         bool                     validate);
 
 /**
  * Higher-level function that reads a full VRT packet.
@@ -128,7 +168,7 @@ int32_t vrt_read_if_context(const void* buf, int32_t words_buf, struct vrt_if_co
  * \retval VRT_ERR_RESERVED                             One or multiple reserved bits are set.
  * \retval VRT_ERR_INVALID_PACKET_TYPE                  Packet type is an invalid value.
  * \retval VRT_ERR_TRAILER_IN_CONTEXT                   Context packet has trailer bit set.
- * \retval VRT_ERR_TSM_IN_DATA                          Data packet has TSM bit set.
+ * \retval VRT_ERR_MISSING_COMMAND                      Command packet, but packet->command is NULL.
  * \retval VRT_ERR_BOUNDS_REAL_TIME                     TSF is VRT_TSF_REAL_TIME but fractional timestamp is outside
  *                                                      valid bounds (> 999999999999 ps).
  * \retval VRT_ERR_BOUNDS_BANDWIDTH                     Bandwidth is outside valid bounds (< 0 Hz).
@@ -151,6 +191,14 @@ int32_t vrt_read_if_context(const void* buf, int32_t words_buf, struct vrt_if_co
  * \retval VRT_ERR_BOUNDS_MAGNETIC_VARIATION            Magnetic variation is outside valid bounds (< -180 or > 180
  *                                                      degrees).
  * \retval VRT_ERR_MISMATCH_PACKET_SIZE                 Packet size in header and calculated packet size do not match.
+ * \retval VRT_ERR_UNSUPPORTED_FIELD                    An unsupported field or indicator word is enabled. Also
+ *                                                      returned without validation.
+ * \retval VRT_ERR_INVALID_V49_SPEC_COMPLIANCE          V49 spec compliance is an invalid value.
+ *
+ * Command packets (VITA 49.2) are read as the command section into *packet->command, followed by the control fields
+ * (control and query-state acknowledge packets) or the indicator bits (cancellation packets) into packet->if_context.
+ * See vrt_read_command() for the errors of the command section. Ext command packets have a custom body after the
+ * command section.
  *
  * \warning The packet body pointer will point into buf, which is why buf isn't const.
  * \warning Fields represented as double but with an underlying 64-bit fixed precision format, i.e. bandwidth,

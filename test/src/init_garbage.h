@@ -6,6 +6,7 @@ struct vrt_fields;
 struct vrt_trailer;
 struct vrt_if_context;
 struct vrt_packet;
+struct vrt_command;
 
 /**
  * Initialize header to an easy to spot, non-default sequence.
@@ -34,6 +35,13 @@ void init_garbage_trailer(struct vrt_trailer* t);
  * \param c IF context.
  */
 void init_garbage_if_context(struct vrt_if_context* c);
+
+/**
+ * Initialize command section to an easy to spot, non-default sequence.
+ *
+ * \param c Command section.
+ */
+void init_garbage_command(struct vrt_command* c);
 
 /**
  * Initialize VRT packet to an easy to spot, non-default sequence.

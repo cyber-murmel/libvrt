@@ -1,18 +1,23 @@
 #include "init_garbage.h"
 
 #include <cstdint>
+#include <cstring>
 
 #include <vrt/vrt_types.h>
 
 void init_garbage_header(struct vrt_header* h) {
-    h->packet_type  = static_cast<vrt_packet_type>(0xFFFFFFFF);
-    h->has.class_id = true;
-    h->has.trailer  = true;
-    h->tsm          = VRT_TSM_COARSE;
-    h->tsi          = static_cast<vrt_tsi>(0xF);
-    h->tsf          = static_cast<vrt_tsf>(0xF);
-    h->packet_count = 0xF;
-    h->packet_size  = 0xFFFF;
+    h->packet_type      = static_cast<vrt_packet_type>(0xFFFFFFFF);
+    h->has.class_id     = true;
+    h->has.trailer      = true;
+    h->tsm              = VRT_TSM_COARSE;
+    h->nd0              = true;
+    h->acknowledge      = true;
+    h->cancellation     = true;
+    h->spectrum_or_time = VRT_SOT_SPECTRUM;
+    h->tsi              = static_cast<vrt_tsi>(0xF);
+    h->tsf              = static_cast<vrt_tsf>(0xF);
+    h->packet_count     = 0xF;
+    h->packet_size      = 0xFFFF;
 }
 
 void init_garbage_fields(struct vrt_fields* f) {
@@ -138,6 +143,9 @@ void init_garbage_if_context(struct vrt_if_context* c) {
     c->has.ephemeris_reference_identifier = true;
     c->has.gps_ascii                      = true;
     c->has.context_association_lists      = true;
+    c->has.health_status                  = true;
+    c->has.v49_spec_compliance            = true;
+    c->has.version_build_code             = true;
 
     c->reference_point_identifier    = 0xFFFFFFFF;
     c->bandwidth                     = 987.654;
@@ -207,6 +215,43 @@ void init_garbage_if_context(struct vrt_if_context* c) {
     c->context_association_lists.vector_component_context_association_list     = reinterpret_cast<uint32_t*>(c);
     c->context_association_lists.asynchronous_channel_context_association_list = reinterpret_cast<uint32_t*>(c);
     c->context_association_lists.asynchronous_channel_tag_list                 = reinterpret_cast<uint32_t*>(c);
+
+    c->health_status                   = 0xFFFFFFFF;
+    c->v49_spec_compliance             = static_cast<vrt_v49_spec_compliance>(0x7);
+    c->version_build_code.year         = 0xFF;
+    c->version_build_code.day          = 0xFFFF;
+    c->version_build_code.revision     = 0xFF;
+    c->version_build_code.user_defined = 0xFFFF;
+}
+
+void init_garbage_command(struct vrt_command* c) {
+    c->cam.controllee_enable     = true;
+    c->cam.controllee_format     = VRT_IDF_UUID;
+    c->cam.controller_enable     = true;
+    c->cam.controller_format     = VRT_IDF_UUID;
+    c->cam.permit_partial        = true;
+    c->cam.permit_warnings       = true;
+    c->cam.permit_errors         = true;
+    c->cam.action_mode           = static_cast<vrt_action_mode>(0x3);
+    c->cam.nack_only             = true;
+    c->cam.validation            = true;
+    c->cam.execution             = true;
+    c->cam.query_state           = true;
+    c->cam.warnings              = true;
+    c->cam.errors                = true;
+    c->cam.timing_control        = static_cast<vrt_timing_control>(0x6);
+    c->cam.partial_action        = true;
+    c->cam.scheduled_or_executed = true;
+    c->message_id                = 0xFFFFFFFF;
+    c->controllee_id             = 0xFFFFFFFF;
+    c->controller_id             = 0xFFFFFFFF;
+    for (int i = 0; i < 4; ++i) {
+        c->controllee_uuid[i] = 0xFFFFFFFF;
+        c->controller_uuid[i] = 0xFFFFFFFF;
+    }
+    /* Responses are bool and word pairs, so a byte pattern fills them with non-default values */
+    std::memset(&c->warnings, 0x01, sizeof(c->warnings));
+    std::memset(&c->errors, 0x01, sizeof(c->errors));
 }
 
 void init_garbage_packet(struct vrt_packet* p) {

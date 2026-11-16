@@ -49,7 +49,8 @@ TEST_F(ReadIfContextTest, ContextFieldChangeIndicator) {
 }
 
 TEST_F(ReadIfContextTest, ContextIndicatorsReserved) {
-    buf_[0] = 0x000000FF;
+    /* Bits 1, 2, 3 and 7 enable CIF1, CIF2, CIF3 and CIF7 since VITA 49.2 */
+    buf_[0] = 0x00000071;
     ASSERT_EQ(vrt_read_if_context(buf_.data(), 1, &c_, true), VRT_ERR_RESERVED);
     ASSERT_EQ(vrt_read_if_context(buf_.data(), 1, &c_, false), 1);
     SCOPED_TRACE(::testing::UnitTest::GetInstance()->current_test_info()->name());

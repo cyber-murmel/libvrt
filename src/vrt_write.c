@@ -48,7 +48,7 @@ int32_t vrt_write_header(const struct vrt_header* header, void* buf, int32_t wor
     }
 
     if (validate) {
-        if (header->packet_type < VRT_PT_IF_DATA_WITHOUT_STREAM_ID || header->packet_type > VRT_PT_EXT_CONTEXT) {
+        if (header->packet_type < VRT_PT_IF_DATA_WITHOUT_STREAM_ID || header->packet_type > VRT_PT_EXT_COMMAND) {
             return VRT_ERR_INVALID_PACKET_TYPE;
         }
         if (header->tsm < VRT_TSM_FINE || header->tsm > VRT_TSM_COARSE) {
@@ -58,10 +58,23 @@ int32_t vrt_write_header(const struct vrt_header* header, void* buf, int32_t wor
             if (header->has.trailer) {
                 return VRT_ERR_TRAILER_IN_CONTEXT;
             }
-        } else {
+        } else if (vrt_is_data(header)) {
             if (header->tsm != VRT_TSM_FINE) {
                 return VRT_ERR_TSM_IN_DATA;
             }
+        } else {
+            if (header->has.trailer || header->nd0 || header->tsm != VRT_TSM_FINE) {
+                return VRT_ERR_INDICATOR_IN_COMMAND;
+            }
+        }
+        if (header->spectrum_or_time < VRT_SOT_TIME || header->spectrum_or_time > VRT_SOT_SPECTRUM) {
+            return VRT_ERR_INVALID_SPECTRUM_OR_TIME;
+        }
+        if (!vrt_is_data(header) && header->spectrum_or_time != VRT_SOT_TIME) {
+            return VRT_ERR_SPECTRUM_IN_NON_DATA;
+        }
+        if (!vrt_is_command(header) && (header->acknowledge || header->cancellation)) {
+            return VRT_ERR_COMMAND_INDICATOR_IN_NON_COMMAND;
         }
         if (header->tsi < VRT_TSI_NONE || header->tsi > VRT_TSI_OTHER) {
             return VRT_ERR_INVALID_TSI;
@@ -80,10 +93,15 @@ int32_t vrt_write_header(const struct vrt_header* header, void* buf, int32_t wor
     /* Rule 6.1.1-6: The reserved bits shall be set to 0. */
     b[0] = 0;
 
+    /*
+     * Bits 26 to 24 depend on the packet type (VITA 49.2). Without validation, fields not valid for the packet type
+     * are ORed into the same bits.
+     */
     b[0] |= mskw(header->packet_type, 28, 4);
     b[0] |= mskw(vrt_b2u(header->has.class_id), 27, 1);
-    b[0] |= mskw(vrt_b2u(header->has.trailer), 26, 1);
-    b[0] |= mskw(header->tsm, 24, 1);
+    b[0] |= mskw(vrt_b2u(header->has.trailer) | vrt_b2u(header->acknowledge), 26, 1);
+    b[0] |= mskw(vrt_b2u(header->nd0), 25, 1);
+    b[0] |= mskw(header->tsm | header->spectrum_or_time | vrt_b2u(header->cancellation), 24, 1);
     b[0] |= mskw(header->tsi, 22, 2);
     b[0] |= mskw(header->tsf, 20, 2);
     b[0] |= mskw(header->packet_count, 16, 4);
@@ -217,43 +235,62 @@ int32_t vrt_write_trailer(const struct vrt_trailer* trailer, void* buf, int32_t 
 }
 
 /**
- * Write IF context indicator field to buffer.
+ * Write indicator words, i.e. CIF0 and the optional CIF1 (VITA 49.2), to buffer. Also used for the warning and error
+ * indicator words of acknowledge packets.
  *
- * \param c IF context to write.
- * \param b Buffer to write to.
+ * \param ind    Indicators to write.
+ * \param change Context field change indicator, which is bit 31 of CIF0.
+ * \param b      Buffer to write to.
  *
- * \return Number of written words, or a negative number if error.
+ * \return Number of written words.
  */
-static int32_t if_context_write_context_indicator_field(const struct vrt_if_context* c, uint32_t* b) {
+static int32_t write_indicator_words(const struct vrt_context_indicators* ind, bool change, uint32_t* b) {
     /* Zero reserved bits */
     b[0] = 0;
 
-    b[0] |= mskw(vrt_b2u(c->context_field_change_indicator), 31, 1);
-    b[0] |= mskw(vrt_b2u(c->has.reference_point_identifier), 30, 1);
-    b[0] |= mskw(vrt_b2u(c->has.bandwidth), 29, 1);
-    b[0] |= mskw(vrt_b2u(c->has.if_reference_frequency), 28, 1);
-    b[0] |= mskw(vrt_b2u(c->has.rf_reference_frequency), 27, 1);
-    b[0] |= mskw(vrt_b2u(c->has.rf_reference_frequency_offset), 26, 1);
-    b[0] |= mskw(vrt_b2u(c->has.if_band_offset), 25, 1);
-    b[0] |= mskw(vrt_b2u(c->has.reference_level), 24, 1);
-    b[0] |= mskw(vrt_b2u(c->has.gain), 23, 1);
-    b[0] |= mskw(vrt_b2u(c->has.over_range_count), 22, 1);
-    b[0] |= mskw(vrt_b2u(c->has.sample_rate), 21, 1);
-    b[0] |= mskw(vrt_b2u(c->has.timestamp_adjustment), 20, 1);
-    b[0] |= mskw(vrt_b2u(c->has.timestamp_calibration_time), 19, 1);
-    b[0] |= mskw(vrt_b2u(c->has.temperature), 18, 1);
-    b[0] |= mskw(vrt_b2u(c->has.device_identifier), 17, 1);
-    b[0] |= mskw(vrt_b2u(c->has.state_and_event_indicators), 16, 1);
-    b[0] |= mskw(vrt_b2u(c->has.data_packet_payload_format), 15, 1);
-    b[0] |= mskw(vrt_b2u(c->has.formatted_gps_geolocation), 14, 1);
-    b[0] |= mskw(vrt_b2u(c->has.formatted_ins_geolocation), 13, 1);
-    b[0] |= mskw(vrt_b2u(c->has.ecef_ephemeris), 12, 1);
-    b[0] |= mskw(vrt_b2u(c->has.relative_ephemeris), 11, 1);
-    b[0] |= mskw(vrt_b2u(c->has.ephemeris_reference_identifier), 10, 1);
-    b[0] |= mskw(vrt_b2u(c->has.gps_ascii), 9, 1);
-    b[0] |= mskw(vrt_b2u(c->has.context_association_lists), 8, 1);
+    b[0] |= mskw(vrt_b2u(change), 31, 1);
+    b[0] |= mskw(vrt_b2u(ind->reference_point_identifier), 30, 1);
+    b[0] |= mskw(vrt_b2u(ind->bandwidth), 29, 1);
+    b[0] |= mskw(vrt_b2u(ind->if_reference_frequency), 28, 1);
+    b[0] |= mskw(vrt_b2u(ind->rf_reference_frequency), 27, 1);
+    b[0] |= mskw(vrt_b2u(ind->rf_reference_frequency_offset), 26, 1);
+    b[0] |= mskw(vrt_b2u(ind->if_band_offset), 25, 1);
+    b[0] |= mskw(vrt_b2u(ind->reference_level), 24, 1);
+    b[0] |= mskw(vrt_b2u(ind->gain), 23, 1);
+    b[0] |= mskw(vrt_b2u(ind->over_range_count), 22, 1);
+    b[0] |= mskw(vrt_b2u(ind->sample_rate), 21, 1);
+    b[0] |= mskw(vrt_b2u(ind->timestamp_adjustment), 20, 1);
+    b[0] |= mskw(vrt_b2u(ind->timestamp_calibration_time), 19, 1);
+    b[0] |= mskw(vrt_b2u(ind->temperature), 18, 1);
+    b[0] |= mskw(vrt_b2u(ind->device_identifier), 17, 1);
+    b[0] |= mskw(vrt_b2u(ind->state_and_event_indicators), 16, 1);
+    b[0] |= mskw(vrt_b2u(ind->data_packet_payload_format), 15, 1);
+    b[0] |= mskw(vrt_b2u(ind->formatted_gps_geolocation), 14, 1);
+    b[0] |= mskw(vrt_b2u(ind->formatted_ins_geolocation), 13, 1);
+    b[0] |= mskw(vrt_b2u(ind->ecef_ephemeris), 12, 1);
+    b[0] |= mskw(vrt_b2u(ind->relative_ephemeris), 11, 1);
+    b[0] |= mskw(vrt_b2u(ind->ephemeris_reference_identifier), 10, 1);
+    b[0] |= mskw(vrt_b2u(ind->gps_ascii), 9, 1);
+    b[0] |= mskw(vrt_b2u(ind->context_association_lists), 8, 1);
 
-    return 1;
+    if (!vrt_has_cif1(ind)) {
+        return 1;
+    }
+
+    b[0] |= VRT_CIF0_CIF1_ENABLE;
+
+    b[1] = 0;
+    if (ind->health_status) {
+        b[1] |= VRT_CIF1_HEALTH_STATUS;
+    }
+    if (ind->v49_spec_compliance) {
+        b[1] |= VRT_CIF1_V49_SPEC_COMPLIANCE;
+    }
+    if (ind->version_build_code) {
+        b[1] |= VRT_CIF1_VERSION_BUILD_CODE;
+    }
+
+    return 2;
 }
 
 /**
@@ -628,14 +665,23 @@ static int32_t if_context_write_context_association_lists(bool                  
         b[0] = sz1 << 16U | sz2;
         b[1] = sz3 << 16U | vrt_b2u(l->has.asynchronous_channel_tag_list) << 15U | sz4;
         b += 2;
-        memcpy(b, l->source_context_association_list, sizeof(uint32_t) * sz1);
+        /* Lists may be NULL when empty, and memcpy() must not get NULL even for size 0 */
+        if (sz1 != 0) {
+            memcpy(b, l->source_context_association_list, sizeof(uint32_t) * sz1);
+        }
         b += sz1;
-        memcpy(b, l->system_context_association_list, sizeof(uint32_t) * sz2);
+        if (sz2 != 0) {
+            memcpy(b, l->system_context_association_list, sizeof(uint32_t) * sz2);
+        }
         b += sz2;
-        memcpy(b, l->vector_component_context_association_list, sizeof(uint32_t) * sz3);
+        if (sz3 != 0) {
+            memcpy(b, l->vector_component_context_association_list, sizeof(uint32_t) * sz3);
+        }
         b += sz3;
-        memcpy(b, l->asynchronous_channel_context_association_list, sizeof(uint32_t) * sz4);
-        if (l->has.asynchronous_channel_tag_list) {
+        if (sz4 != 0) {
+            memcpy(b, l->asynchronous_channel_context_association_list, sizeof(uint32_t) * sz4);
+        }
+        if (l->has.asynchronous_channel_tag_list && sz4 != 0) {
             b += sz4;
             memcpy(b, l->asynchronous_channel_tag_list, sizeof(uint32_t) * sz4);
         }
@@ -656,10 +702,7 @@ int32_t vrt_write_if_context(const struct vrt_if_context* if_context, void* buf,
 
     uint32_t* b = (uint32_t*)buf;
 
-    int32_t rv = if_context_write_context_indicator_field(if_context, b);
-    if (rv < 0) {
-        return rv;
-    }
+    int32_t rv = write_indicator_words(&if_context->has, if_context->context_field_change_indicator, b);
     b += rv;
     if (if_context->has.reference_point_identifier) {
         b[0] = if_context->reference_point_identifier;
@@ -823,11 +866,242 @@ int32_t vrt_write_if_context(const struct vrt_if_context* if_context, void* buf,
         return rv;
     }
     b += rv;
-    /* No need to increase b here since it is last */
     rv = if_context_write_context_association_lists(if_context->has.context_association_lists,
                                                     &if_context->context_association_lists, b, validate);
     if (rv < 0) {
         return rv;
+    }
+    b += rv;
+
+    /* CIF1 fields (VITA 49.2) */
+    if (if_context->has.health_status) {
+        b[0] = if_context->health_status;
+        b += 1;
+    }
+    if (if_context->has.v49_spec_compliance) {
+        if (validate) {
+            if (if_context->v49_spec_compliance < VRT_V49_0 || if_context->v49_spec_compliance > VRT_V49_2) {
+                return VRT_ERR_INVALID_V49_SPEC_COMPLIANCE;
+            }
+        }
+
+        b[0] = (uint32_t)if_context->v49_spec_compliance;
+        b += 1;
+    }
+    if (if_context->has.version_build_code) {
+        const struct vrt_version_build_code* v = &if_context->version_build_code;
+        if (validate) {
+            if (v->year > 0x7F || v->day > 0x01FF || v->revision > 0x3F || v->user_defined > 0x03FF) {
+                return VRT_ERR_BOUNDS_VERSION_BUILD_CODE;
+            }
+        }
+
+        b[0] = mskw(v->year, 25, 7) | mskw(v->day, 16, 9) | mskw(v->revision, 10, 6) | mskw(v->user_defined, 0, 10);
+        /* No need to increase b here since it is last */
+    }
+
+    return words;
+}
+
+/**
+ * Write warning or error response words of an acknowledge packet (VITA 49.2), i.e. one word per indicated field.
+ *
+ * \param r Responses to write.
+ * \param b Buffer to write to.
+ *
+ * \return Number of written words.
+ */
+static int32_t write_ack_response_words(const struct vrt_ack_responses* r, uint32_t* b) {
+    const struct vrt_context_indicators* h = &r->has;
+
+    const bool     has[] = {h->reference_point_identifier,
+                            h->bandwidth,
+                            h->if_reference_frequency,
+                            h->rf_reference_frequency,
+                            h->rf_reference_frequency_offset,
+                            h->if_band_offset,
+                            h->reference_level,
+                            h->gain,
+                            h->over_range_count,
+                            h->sample_rate,
+                            h->timestamp_adjustment,
+                            h->timestamp_calibration_time,
+                            h->temperature,
+                            h->device_identifier,
+                            h->state_and_event_indicators,
+                            h->data_packet_payload_format,
+                            h->formatted_gps_geolocation,
+                            h->formatted_ins_geolocation,
+                            h->ecef_ephemeris,
+                            h->relative_ephemeris,
+                            h->ephemeris_reference_identifier,
+                            h->gps_ascii,
+                            h->context_association_lists,
+                            h->health_status,
+                            h->v49_spec_compliance,
+                            h->version_build_code};
+    const uint32_t src[] = {r->reference_point_identifier,
+                            r->bandwidth,
+                            r->if_reference_frequency,
+                            r->rf_reference_frequency,
+                            r->rf_reference_frequency_offset,
+                            r->if_band_offset,
+                            r->reference_level,
+                            r->gain,
+                            r->over_range_count,
+                            r->sample_rate,
+                            r->timestamp_adjustment,
+                            r->timestamp_calibration_time,
+                            r->temperature,
+                            r->device_identifier,
+                            r->state_and_event_indicators,
+                            r->data_packet_payload_format,
+                            r->formatted_gps_geolocation,
+                            r->formatted_ins_geolocation,
+                            r->ecef_ephemeris,
+                            r->relative_ephemeris,
+                            r->ephemeris_reference_identifier,
+                            r->gps_ascii,
+                            r->context_association_lists,
+                            r->health_status,
+                            r->v49_spec_compliance,
+                            r->version_build_code};
+
+    int32_t words = 0;
+    for (uint32_t i = 0; i < sizeof(has) / sizeof(has[0]); ++i) {
+        if (has[i]) {
+            b[words] = src[i];
+            words += 1;
+        }
+    }
+
+    return words;
+}
+
+/**
+ * Write a controllee or controller identifier (VITA 49.2).
+ *
+ * \param enable True if the identifier is included.
+ * \param format Identifier format.
+ * \param id     32-bit identifier.
+ * \param uuid   UUID.
+ * \param b      Buffer to write to.
+ *
+ * \return Number of written 32-bit words.
+ */
+static int32_t write_identifier(bool                       enable,
+                                enum vrt_identifier_format format,
+                                uint32_t                   id,
+                                const uint32_t*            uuid,
+                                uint32_t*                  b) {
+    int32_t words = vrt_words_identifier(enable, format);
+    if (words == 1) {
+        b[0] = id;
+    } else if (words == 4) {
+        memcpy(b, uuid, sizeof(uint32_t) * 4);
+    }
+    return words;
+}
+
+/**
+ * Validate the Control/Acknowledge mode (VITA 49.2).
+ *
+ * \param header Header, which tells if it is an acknowledge packet.
+ * \param cam    CAM to validate.
+ *
+ * \return 0 if valid, or a negative number if error.
+ */
+static int32_t validate_cam(const struct vrt_header* header, const struct vrt_cam* cam) {
+    if (cam->controllee_format < VRT_IDF_WORD || cam->controllee_format > VRT_IDF_UUID ||
+        cam->controller_format < VRT_IDF_WORD || cam->controller_format > VRT_IDF_UUID) {
+        return VRT_ERR_INVALID_IDENTIFIER_FORMAT;
+    }
+    if (cam->action_mode < VRT_AM_NO_ACTION || cam->action_mode > VRT_AM_EXECUTE) {
+        return VRT_ERR_INVALID_ACTION_MODE;
+    }
+    if (cam->timing_control < VRT_TC_IGNORE ||
+        (cam->timing_control > VRT_TC_EARLY_LATE && cam->timing_control != VRT_TC_TIMING_ISSUES)) {
+        return VRT_ERR_INVALID_TIMING_CONTROL;
+    }
+    if (header->acknowledge) {
+        if (vrt_b2u(cam->validation) + vrt_b2u(cam->execution) + vrt_b2u(cam->query_state) != 1) {
+            return VRT_ERR_ACK_SUBTYPE;
+        }
+    } else {
+        if (cam->partial_action || cam->scheduled_or_executed || cam->timing_control == VRT_TC_TIMING_ISSUES) {
+            return VRT_ERR_ACK_FIELD_IN_CONTROL;
+        }
+    }
+    return 0;
+}
+
+int32_t vrt_write_command(const struct vrt_header*  header,
+                          const struct vrt_command* command,
+                          void*                     buf,
+                          int32_t                   words_buf,
+                          bool                      validate) {
+    const int32_t words = vrt_words_command(header, command);
+
+    /* Check if buf size is sufficient */
+    if (words_buf < words) {
+        return VRT_ERR_BUFFER_SIZE;
+    }
+
+    const struct vrt_cam* cam = &command->cam;
+
+    if (validate) {
+        int32_t rv = validate_cam(header, cam);
+        if (rv < 0) {
+            return rv;
+        }
+    }
+
+    uint32_t* b = (uint32_t*)buf;
+
+    /* Zero reserved bits */
+    b[0] = 0;
+
+    b[0] |= mskw(vrt_b2u(cam->controllee_enable), 31, 1);
+    b[0] |= mskw(cam->controllee_format, 30, 1);
+    b[0] |= mskw(vrt_b2u(cam->controller_enable), 29, 1);
+    b[0] |= mskw(cam->controller_format, 28, 1);
+    b[0] |= mskw(vrt_b2u(cam->permit_partial), 27, 1);
+    b[0] |= mskw(vrt_b2u(cam->permit_warnings), 26, 1);
+    b[0] |= mskw(vrt_b2u(cam->permit_errors), 25, 1);
+    b[0] |= mskw(cam->action_mode, 23, 2);
+    b[0] |= mskw(vrt_b2u(cam->nack_only), 22, 1);
+    b[0] |= mskw(vrt_b2u(cam->validation), 20, 1);
+    b[0] |= mskw(vrt_b2u(cam->execution), 19, 1);
+    b[0] |= mskw(vrt_b2u(cam->query_state), 18, 1);
+    b[0] |= mskw(vrt_b2u(cam->warnings), 17, 1);
+    b[0] |= mskw(vrt_b2u(cam->errors), 16, 1);
+    b[0] |= mskw(cam->timing_control, 12, 3);
+    b[0] |= mskw(vrt_b2u(cam->partial_action), 11, 1);
+    b[0] |= mskw(vrt_b2u(cam->scheduled_or_executed), 10, 1);
+
+    b[1] = command->message_id;
+    b += 2;
+
+    b += write_identifier(cam->controllee_enable, cam->controllee_format, command->controllee_id,
+                          command->controllee_uuid, b);
+    b += write_identifier(cam->controller_enable, cam->controller_format, command->controller_id,
+                          command->controller_uuid, b);
+
+    /* Warning and error indicator words, followed by all warning and then all error response words */
+    if (vrt_has_ack_responses(header, cam)) {
+        if (cam->warnings) {
+            b += write_indicator_words(&command->warnings.has, false, b);
+        }
+        if (cam->errors) {
+            b += write_indicator_words(&command->errors.has, false, b);
+        }
+        if (cam->warnings) {
+            b += write_ack_response_words(&command->warnings, b);
+        }
+        if (cam->errors) {
+            /* No need to increase b here since it is last */
+            (void)write_ack_response_words(&command->errors, b);
+        }
     }
 
     return words;
@@ -851,13 +1125,27 @@ int32_t vrt_write_packet(const struct vrt_packet* packet, void* buf, int32_t wor
     }
     words_total += words_fields;
 
+    /* Command section (VITA 49.2) */
+    if (vrt_is_command(&packet->header)) {
+        if (packet->command == NULL) {
+            return VRT_ERR_MISSING_COMMAND;
+        }
+        int32_t words_command =
+            vrt_write_command(&packet->header, packet->command, b + words_total, words_buf - words_total, validate);
+        if (words_command < 0) {
+            return words_command;
+        }
+        words_total += words_command;
+    }
+
     /* Body */
     switch (packet->header.packet_type) {
         case VRT_PT_IF_DATA_WITHOUT_STREAM_ID:
         case VRT_PT_IF_DATA_WITH_STREAM_ID:
         case VRT_PT_EXT_DATA_WITHOUT_STREAM_ID:
         case VRT_PT_EXT_DATA_WITH_STREAM_ID:
-        case VRT_PT_EXT_CONTEXT: {
+        case VRT_PT_EXT_CONTEXT:
+        case VRT_PT_EXT_COMMAND: {
             /* Check bounds */
             if (packet->words_body > words_buf - words_total) {
                 return VRT_ERR_BUFFER_SIZE;
@@ -880,6 +1168,33 @@ int32_t vrt_write_packet(const struct vrt_packet* packet, void* buf, int32_t wor
             words_total += words_if_context;
             break;
         }
+        case VRT_PT_COMMAND: {
+            switch (vrt_command_payload(&packet->header, &packet->command->cam)) {
+                case VRT_CP_CONTEXT: {
+                    int32_t words_if_context =
+                        vrt_write_if_context(&packet->if_context, b + words_total, words_buf - words_total, validate);
+                    if (words_if_context < 0) {
+                        return words_if_context;
+                    }
+                    words_total += words_if_context;
+                    break;
+                }
+                case VRT_CP_INDICATORS: {
+                    /* Cancellation packets have indicator words without fields */
+                    if (words_buf - words_total < vrt_words_indicator_words(&packet->if_context.has)) {
+                        return VRT_ERR_BUFFER_SIZE;
+                    }
+                    words_total += write_indicator_words(
+                        &packet->if_context.has, packet->if_context.context_field_change_indicator, b + words_total);
+                    break;
+                }
+                default: {
+                    /* Warning and error responses are part of the command section */
+                    break;
+                }
+            }
+            break;
+        }
         default: {
             /* Do nothing here. Note that validation must be false to end up here. */
             break;
@@ -887,7 +1202,7 @@ int32_t vrt_write_packet(const struct vrt_packet* packet, void* buf, int32_t wor
     }
 
     /* Trailer */
-    if (!vrt_is_context(&packet->header) && packet->header.has.trailer) {
+    if (vrt_words_trailer(&packet->header) != 0) {
         int32_t words_trailer = vrt_write_trailer(&packet->trailer, b + words_total, words_buf - words_total, validate);
         if (words_trailer < 0) {
             return words_trailer;

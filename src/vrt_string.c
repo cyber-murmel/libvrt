@@ -17,6 +17,10 @@ const char* vrt_string_packet_type(enum vrt_packet_type packet_type) {
             return "IF Context packet";
         case VRT_PT_EXT_CONTEXT:
             return "Extension Context packet";
+        case VRT_PT_COMMAND:
+            return "Command packet";
+        case VRT_PT_EXT_COMMAND:
+            return "Extension Command packet";
         default:
             return "Unknown";
     }
@@ -137,6 +141,75 @@ const char* vrt_string_data_item_format(enum vrt_data_item_format data_item_form
     }
 }
 
+const char* vrt_string_spectrum_or_time(enum vrt_spectrum_or_time spectrum_or_time) {
+    switch (spectrum_or_time) {
+        case VRT_SOT_TIME:
+            return "Time";
+        case VRT_SOT_SPECTRUM:
+            return "Spectrum";
+        default:
+            return "Unknown";
+    }
+}
+
+const char* vrt_string_v49_spec_compliance(enum vrt_v49_spec_compliance v49_spec_compliance) {
+    switch (v49_spec_compliance) {
+        case VRT_V49_0:
+            return "V49.0";
+        case VRT_V49_1:
+            return "V49.1";
+        case VRT_V49_A:
+            return "V49A";
+        case VRT_V49_2:
+            return "V49.2";
+        default:
+            return "Unknown";
+    }
+}
+
+const char* vrt_string_identifier_format(enum vrt_identifier_format identifier_format) {
+    switch (identifier_format) {
+        case VRT_IDF_WORD:
+            return "32-bit Word";
+        case VRT_IDF_UUID:
+            return "128-bit UUID";
+        default:
+            return "Unknown";
+    }
+}
+
+const char* vrt_string_action_mode(enum vrt_action_mode action_mode) {
+    switch (action_mode) {
+        case VRT_AM_NO_ACTION:
+            return "No Action";
+        case VRT_AM_DRY_RUN:
+            return "Dry Run";
+        case VRT_AM_EXECUTE:
+            return "Execute";
+        default:
+            return "Unknown";
+    }
+}
+
+const char* vrt_string_timing_control(enum vrt_timing_control timing_control) {
+    switch (timing_control) {
+        case VRT_TC_IGNORE:
+            return "Ignore Timestamp";
+        case VRT_TC_DEVICE:
+            return "Device Execution";
+        case VRT_TC_LATE:
+            return "Late Allowed";
+        case VRT_TC_EARLY:
+            return "Early Allowed";
+        case VRT_TC_EARLY_LATE:
+            return "Early or Late Allowed";
+        case VRT_TC_TIMING_ISSUES:
+            return "Timing Issues";
+        default:
+            return "Unknown";
+    }
+}
+
 const char* vrt_string_error(int32_t error /* Do NOT use vrt_error_code, since it isn't returned by any function */) {
     /* No error */
     if (error >= 0) {
@@ -247,6 +320,32 @@ const char* vrt_string_error(int32_t error /* Do NOT use vrt_error_code, since i
                    "differ";
         case VRT_ERR_EXPECTED_FIELD:
             return "Expected a field that was not present";
+        case VRT_ERR_SPECTRUM_IN_NON_DATA:
+            return "Spectrum indicator is set in a non data packet";
+        case VRT_ERR_COMMAND_INDICATOR_IN_NON_COMMAND:
+            return "Acknowledge or cancellation indicator is set in a non command packet";
+        case VRT_ERR_INDICATOR_IN_COMMAND:
+            return "Command packet has the trailer, Nd0 or TSM indicator set";
+        case VRT_ERR_INVALID_SPECTRUM_OR_TIME:
+            return "Spectrum or time is an invalid value";
+        case VRT_ERR_UNSUPPORTED_FIELD:
+            return "Indicator word enables a field or indicator word that is not supported";
+        case VRT_ERR_INVALID_V49_SPEC_COMPLIANCE:
+            return "V49 spec compliance is an invalid value";
+        case VRT_ERR_BOUNDS_VERSION_BUILD_CODE:
+            return "Version and build code subfield is outside valid bounds";
+        case VRT_ERR_INVALID_IDENTIFIER_FORMAT:
+            return "Controllee or controller identifier format is an invalid value";
+        case VRT_ERR_INVALID_ACTION_MODE:
+            return "Action mode is an invalid value";
+        case VRT_ERR_INVALID_TIMING_CONTROL:
+            return "Timing control is an invalid value";
+        case VRT_ERR_ACK_FIELD_IN_CONTROL:
+            return "Acknowledge-only CAM field is set in a non acknowledge packet";
+        case VRT_ERR_ACK_SUBTYPE:
+            return "Acknowledge packet does not set exactly one of validation, execution and query-state";
+        case VRT_ERR_MISSING_COMMAND:
+            return "Command packet but the command section pointer is NULL";
         default:
             return "Unknown";
     }

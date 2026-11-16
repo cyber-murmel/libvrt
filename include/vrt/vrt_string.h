@@ -98,6 +98,61 @@ const char* vrt_string_real_or_complex(enum vrt_real_complex real_or_complex);
 const char* vrt_string_data_item_format(enum vrt_data_item_format data_item_format);
 
 /**
+ * Get a string representation of Spectrum or time enum.
+ *
+ * \param spectrum_or_time Spectrum or time.
+ *
+ * \return String representation.
+ *
+ * \note Inputting an unknown Spectrum or time returns "Unknown".
+ */
+const char* vrt_string_spectrum_or_time(enum vrt_spectrum_or_time spectrum_or_time);
+
+/**
+ * Get a string representation of V49 spec compliance enum.
+ *
+ * \param v49_spec_compliance V49 spec compliance.
+ *
+ * \return String representation.
+ *
+ * \note Inputting an unknown V49 spec compliance returns "Unknown".
+ */
+const char* vrt_string_v49_spec_compliance(enum vrt_v49_spec_compliance v49_spec_compliance);
+
+/**
+ * Get a string representation of Identifier format enum.
+ *
+ * \param identifier_format Identifier format.
+ *
+ * \return String representation.
+ *
+ * \note Inputting an unknown Identifier format returns "Unknown".
+ */
+const char* vrt_string_identifier_format(enum vrt_identifier_format identifier_format);
+
+/**
+ * Get a string representation of Action mode enum.
+ *
+ * \param action_mode Action mode.
+ *
+ * \return String representation.
+ *
+ * \note Inputting an unknown Action mode returns "Unknown".
+ */
+const char* vrt_string_action_mode(enum vrt_action_mode action_mode);
+
+/**
+ * Get a string representation of Timing control enum.
+ *
+ * \param timing_control Timing control.
+ *
+ * \return String representation.
+ *
+ * \note Inputting an unknown Timing control returns "Unknown".
+ */
+const char* vrt_string_timing_control(enum vrt_timing_control timing_control);
+
+/**
  * Get a string representation of an error code.
  *
  * \param error Error code.

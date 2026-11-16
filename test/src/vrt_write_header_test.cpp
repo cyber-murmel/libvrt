@@ -47,10 +47,11 @@ TEST_F(WriteHeaderTest, PacketTypeInvalidSmall) {
 }
 
 TEST_F(WriteHeaderTest, PacketTypeInvalidLarge) {
-    h_.packet_type = static_cast<vrt_packet_type>(6);
+    /* Types 6 and 7 are command packets since VITA 49.2 */
+    h_.packet_type = static_cast<vrt_packet_type>(8);
     ASSERT_EQ(vrt_write_header(&h_, buf_.data(), 1, true), VRT_ERR_INVALID_PACKET_TYPE);
     ASSERT_EQ(vrt_write_header(&h_, buf_.data(), 1, false), 1);
-    ASSERT_EQ(Hex(buf_[0]), Hex(0x60000000));
+    ASSERT_EQ(Hex(buf_[0]), Hex(0x80000000));
     ASSERT_EQ(Hex(buf_[1]), Hex(0xBAADF00D));
 }
 

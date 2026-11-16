@@ -212,7 +212,63 @@ enum vrt_error_code {
     /**
      * Expected a field that was not present.
      */
-    VRT_ERR_EXPECTED_FIELD = -51
+    VRT_ERR_EXPECTED_FIELD = -51,
+    /**
+     * Spectrum indicator is set in a non data packet.
+     */
+    VRT_ERR_SPECTRUM_IN_NON_DATA = -52,
+    /**
+     * Acknowledge or cancellation indicator is set in a non command packet.
+     */
+    VRT_ERR_COMMAND_INDICATOR_IN_NON_COMMAND = -53,
+    /**
+     * Command packet has the trailer, Nd0 or TSM indicator set.
+     */
+    VRT_ERR_INDICATOR_IN_COMMAND = -54,
+    /**
+     * Spectrum or time is an invalid value.
+     */
+    VRT_ERR_INVALID_SPECTRUM_OR_TIME = -55,
+    /**
+     * Indicator word enables a field or indicator word that is not supported (CIF2, CIF3, CIF7, or a CIF1 field other
+     * than health status, V49 spec compliance, and version and build code). Since the size of such a field is unknown,
+     * this is an error even when validation is disabled.
+     */
+    VRT_ERR_UNSUPPORTED_FIELD = -56,
+    /**
+     * V49 spec compliance is an invalid value.
+     */
+    VRT_ERR_INVALID_V49_SPEC_COMPLIANCE = -57,
+    /**
+     * Version and build code subfield is outside valid bounds (year > 0x7F, day > 0x1FF, revision > 0x3F, or user
+     * defined > 0x3FF).
+     */
+    VRT_ERR_BOUNDS_VERSION_BUILD_CODE = -58,
+    /**
+     * Controllee or controller identifier format is an invalid value.
+     */
+    VRT_ERR_INVALID_IDENTIFIER_FORMAT = -59,
+    /**
+     * Action mode is an invalid value.
+     */
+    VRT_ERR_INVALID_ACTION_MODE = -60,
+    /**
+     * Timing control is an invalid value.
+     */
+    VRT_ERR_INVALID_TIMING_CONTROL = -61,
+    /**
+     * Acknowledge-only CAM field (partial action, scheduled or executed, or timing issues) is set in a non acknowledge
+     * packet.
+     */
+    VRT_ERR_ACK_FIELD_IN_CONTROL = -62,
+    /**
+     * Acknowledge packet does not set exactly one of the validation, execution, and query-state CAM bits.
+     */
+    VRT_ERR_ACK_SUBTYPE = -63,
+    /**
+     * Packet is a command packet, but the command section pointer of the packet is NULL.
+     */
+    VRT_ERR_MISSING_COMMAND = -64
 };
 
 #ifdef __cplusplus
